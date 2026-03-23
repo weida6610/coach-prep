@@ -2,7 +2,7 @@
   "name": "教練備課助手",
   "short_name": "備課助手",
   "description": "AI 輔助健身教練備課與課堂紀錄系統",
-  "start_url": "/index.html",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0f0f1a",
   "theme_color": "#00e5a0",
