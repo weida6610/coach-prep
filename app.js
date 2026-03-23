@@ -66,6 +66,9 @@ function renderView(view, param) {
   switch (view) {
     case 'dashboard':
       title.textContent = '今日課程';
+      actionBtn.style.display = 'flex';
+      actionBtn.innerHTML = '🔑';
+      actionBtn.onclick = () => showApiKeyModal();
       content.innerHTML = renderDashboard();
       break;
 

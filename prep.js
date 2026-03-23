@@ -5,6 +5,165 @@
 // State for current prep/session
 let currentPrepPlan = [];
 let currentSessionState = null;
+let geminiLoading = false;
+
+// ============================================
+// Gemini AI Integration
+// ============================================
+function getApiKey() {
+  return localStorage.getItem('gemini_api_key') || '';
+}
+
+function setApiKey(key) {
+  localStorage.setItem('gemini_api_key', key);
+}
+
+async function callGeminiAI(studentId) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    showApiKeyModal();
+    return;
+  }
+
+  const student = DB.getStudent(studentId);
+  const sessions = DB.getSessions(studentId);
+  const lastSession = sessions[0];
+  const exerciseLib = DB.getExercises();
+
+  const prompt = `你是一位專業的健身教練兼防護員助手，專長 NKT Lv.3 檢測與矯正運動。請根據以下學員資訊，產出今日課表。
+
+## 學員資料
+- 姓名：${student.name}
+- 年齡：${student.age || '未知'}
+- 訓練目標：${student.goals}
+- 病史/傷病：${student.medicalHistory || '無'}
+- NKT 檢測發現：${student.nktFindings || '尚未檢測'}
+- 目前訓練階段：${student.currentPhase}
+- 累計堂數：${student.totalSessions}
+- 備註：${student.notes || '無'}
+
+${lastSession ? `## 上次課程紀錄 (${lastSession.date})
+- 類型：${lastSession.sessionType}
+- 動作：${lastSession.exercises.map(e => e.name + ' ' + e.sets + '×' + e.reps + ' ' + e.weight + ' 品質:' + e.quality + (e.notes ? ' 備註:' + e.notes : '')).join('\n  ')}
+- 當日狀況：${lastSession.conditionNotes || '無'}
+- 教練筆記：${lastSession.coachNotes || '無'}
+- 下堂課建議：${lastSession.nextSuggestion || '無'}` : '（首次上課，無歷史紀錄）'}
+
+## 要求
+請產出完整課表，包含暖身、矯正動作（如需要）、肌力訓練。
+
+**請嚴格使用以下 JSON 格式回覆，不要加任何說明文字：**
+[
+  {
+    "name": "動作名稱",
+    "category": "暖身|NKT檢測|矯正動作|肌力訓練",
+    "target": "目標肌群",
+    "sets": 3,
+    "reps": "10",
+    "weight": "-",
+    "cues": "動作提示"
+  }
+]
+
+只回覆 JSON 陣列，不要其他文字。`;
+
+  geminiLoading = true;
+  const loadingEl = document.getElementById('gemini-result');
+  if (loadingEl) loadingEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--accent)"><div style="font-size:2rem;margin-bottom:8px" class="spin">🧠</div>Gemini AI 正在分析學員資料並產生課表...</div>';
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || 'API 錯誤');
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    // Parse JSON from response (handle markdown code blocks)
+    let jsonStr = text;
+    const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+    
+    const exercises = JSON.parse(jsonStr);
+    geminiLoading = false;
+    
+    // Replace current plan with Gemini's plan
+    currentPrepPlan = exercises.map(ex => ({
+      exerciseId: 'AI-' + Math.random().toString(36).substr(2, 6),
+      name: ex.name,
+      category: ex.category,
+      target: ex.target || '',
+      sets: ex.sets || 3,
+      reps: String(ex.reps || '10'),
+      weight: ex.weight || '-',
+      cues: ex.cues || '',
+      isAiGenerated: true
+    }));
+    
+    // Re-render prep view
+    navigationStack.pop();
+    navigate('prep', studentId);
+    showToast('✅ Gemini AI 課表已產生！');
+    
+  } catch (err) {
+    geminiLoading = false;
+    console.error('Gemini API error:', err);
+    if (loadingEl) loadingEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--danger)">❌ AI 產生失敗：${err.message}<br><br><button class="btn-primary secondary" style="display:inline-flex;width:auto;padding:8px 20px" onclick="showApiKeyModal()">🔑 檢查 API Key</button></div>`;
+  }
+}
+
+function showApiKeyModal() {
+  const currentKey = getApiKey();
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">🔑 設定 Gemini API Key</div></div>
+    <div class="form-section">
+      <div class="form-group">
+        <label class="form-label">API Key</label>
+        <input type="password" id="api-key-input" value="${currentKey}" placeholder="貼上你的 Gemini API Key">
+      </div>
+      <p style="font-size:0.75rem;color:var(--text-secondary);line-height:1.5;margin-bottom:16px">
+        前往 <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">Google AI Studio</a> 免費取得 API Key
+      </p>
+      <button class="btn-primary accent" onclick="setApiKey(document.getElementById('api-key-input').value.trim()); closeModal(); showToast('✅ API Key 已儲存')">
+        💾 儲存
+      </button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function addAiExerciseToLibrary(idx) {
+  const ex = currentPrepPlan[idx];
+  if (!ex) return;
+  
+  DB.saveExercise({
+    name: ex.name,
+    category: ex.category,
+    target: ex.target || '',
+    defaultSets: ex.sets,
+    defaultReps: String(ex.reps),
+    cues: ex.cues || ''
+  });
+  
+  showToast(`✅ 「${ex.name}」已加入動作庫`);
+  // Update button visual
+  const btn = document.getElementById(`save-lib-${idx}`);
+  if (btn) {
+    btn.innerHTML = '✅ 已加入';
+    btn.style.color = 'var(--success)';
+    btn.disabled = true;
+  }
+}
 
 function generateAISuggestions(studentId) {
   const student = DB.getStudent(studentId);
@@ -108,19 +267,27 @@ function renderPrep(studentId) {
       </div>
     </div>` : ''}
     <div class="prep-section fade-in stagger-2">
-      <div class="prep-section-title">🤖 AI 建議課表 <span class="ai-badge">✨ Auto</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="prep-section-title" style="margin-bottom:0">🤖 AI 建議課表 <span class="ai-badge">✨ Auto</span></div>
+        <button onclick="callGeminiAI('${studentId}')" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--radius-full);background:linear-gradient(135deg,rgba(108,92,231,0.3),rgba(0,229,160,0.3));border:1px solid rgba(108,92,231,0.4);color:var(--text-primary);font-size:0.78rem;font-weight:600;cursor:pointer;transition:all 0.2s">🧠 Gemini AI</button>
+      </div>
+      <div id="gemini-result"></div>
       ${Object.entries(groups).map(([cat, exercises]) => `
         <div class="exercise-group">
           <div class="exercise-group-title">${catEmojis[cat] || '💪'} ${cat}</div>
-          ${exercises.map((ex, i) => `
+          ${exercises.map((ex, i) => {
+            const globalIdx = currentPrepPlan.indexOf(ex);
+            const existsInLib = DB.getExercises().some(e => e.name === ex.name);
+            return `
             <div class="exercise-item" id="prep-ex-${i}">
               <div class="exercise-icon ${catIcons[cat] || 'strength'}">${catEmojis[cat] || '💪'}</div>
               <div class="exercise-details">
                 <div class="exercise-name">${ex.name}</div>
                 <div class="exercise-spec">${ex.sets}×${ex.reps} ${ex.weight !== '-' ? '· ' + ex.weight : ''}</div>
               </div>
-              <button class="exercise-remove" onclick="removePrepExercise(${currentPrepPlan.indexOf(ex)}); event.stopPropagation();">✕</button>
-            </div>`).join('')}
+              ${ex.isAiGenerated && !existsInLib ? `<button id="save-lib-${globalIdx}" class="exercise-remove" style="color:var(--accent);font-size:0.7rem;width:auto;padding:4px 8px" onclick="addAiExerciseToLibrary(${globalIdx}); event.stopPropagation();">➕ 加入庫</button>` : ''}
+              <button class="exercise-remove" onclick="removePrepExercise(${globalIdx}); event.stopPropagation();">✕</button>
+            </div>`}).join('')}
         </div>`).join('')}
       <button class="btn-add-exercise" onclick="showExercisePicker('${studentId}')">+ 新增動作</button>
     </div>
