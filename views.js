@@ -1,0 +1,240 @@
+// ============================================
+// View Renderers
+// ============================================
+
+function renderDashboard() {
+  const students = DB.getStudents();
+  const schedule = DB.getSchedule();
+  const todaySessions = DB.getSessions().filter(s => s.date === getTodayStr());
+  const now = new Date();
+  const weekday = ['日','一','二','三','四','五','六'][now.getDay()];
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+
+  return `
+    <div class="dashboard-hero fade-in">
+      <div class="dashboard-greeting">💪 教練，準備好了嗎</div>
+      <div class="dashboard-date">${month}月${day}日 星期${weekday}</div>
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-number">${schedule.length}</div>
+          <div class="stat-label">今日堂數</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">${students.length}</div>
+          <div class="stat-label">學員數</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">${todaySessions.length}</div>
+          <div class="stat-label">已記錄</div>
+        </div>
+      </div>
+    </div>
+    <div class="section-header fade-in stagger-1">
+      <div class="section-title">📋 今日課程</div>
+    </div>
+    <div class="session-list">
+      ${schedule.map((s, i) => {
+        const student = DB.getStudent(s.studentId);
+        if (!student) return '';
+        return `
+          <div class="session-card fade-in stagger-${Math.min(i+2, 6)}" onclick="navigate('prep', '${s.studentId}')">
+            <div class="session-time">
+              <div class="session-time-hour">${s.time}</div>
+              <div class="session-time-period">${s.period}</div>
+            </div>
+            <div class="session-divider" style="background:${student.avatarColor}"></div>
+            <div class="session-info">
+              <div class="session-student-name">${student.name}</div>
+              <div class="session-type">${s.type} · 第${student.totalSessions + 1}堂</div>
+            </div>
+            <div class="session-status ${s.status}">
+              ${s.status === 'pending' ? '📝' : s.status === 'prepped' ? '✅' : '🏁'}
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function renderStudents() {
+  const students = DB.getStudents();
+  return `
+    <div class="search-container fade-in">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" id="student-search" placeholder="搜尋學員..." oninput="filterStudents(this.value)">
+      </div>
+    </div>
+    <div class="student-list" id="student-list-container">
+      ${students.map((s, i) => renderStudentCard(s, i)).join('')}
+    </div>`;
+}
+
+function renderStudentCard(s, i) {
+  const initial = s.name.charAt(0);
+  return `
+    <div class="student-card fade-in stagger-${Math.min(i+1, 6)}" onclick="navigate('student-detail', '${s.id}')" data-name="${s.name}">
+      <div class="student-avatar" style="background:${s.avatarColor}">${initial}</div>
+      <div class="student-info">
+        <div class="student-name">${s.name}</div>
+        <div class="student-meta">${s.goals}</div>
+      </div>
+      <div class="student-sessions-badge">
+        <strong>${s.totalSessions}</strong>堂
+      </div>
+    </div>`;
+}
+
+function renderStudentDetail(studentId) {
+  const s = DB.getStudent(studentId);
+  if (!s) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
+  const sessions = DB.getSessions(studentId);
+  const initial = s.name.charAt(0);
+  const phaseTag = { '矯正期':'tag-warning', '肌力期':'tag-accent', '體能期':'tag-info' }[s.currentPhase] || 'tag-accent';
+
+  return `
+    <div class="profile-header fade-in">
+      <div class="profile-avatar" style="background:${s.avatarColor}">${initial}</div>
+      <div class="profile-name">${s.name}</div>
+      <div class="profile-subtitle">
+        <span class="tag ${phaseTag}">${s.currentPhase}</span>
+        · 共 ${s.totalSessions} 堂
+      </div>
+    </div>
+    <div class="profile-actions fade-in stagger-1">
+      <button class="btn-primary accent" onclick="navigate('prep', '${s.id}')">📋 開始備課</button>
+      <button class="btn-primary secondary" onclick="navigate('edit-student', '${s.id}')">✏️ 編輯</button>
+    </div>
+    <div class="info-section fade-in stagger-2">
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-item-label">🎯 訓練目標</div>
+          <div class="info-item-value">${s.goals}</div>
+        </div>
+        <div class="info-item">
+          <div class="info-item-label">🏥 病史/傷病</div>
+          <div class="info-item-value">${s.medicalHistory || '無'}</div>
+        </div>
+        <div class="info-item">
+          <div class="info-item-label">🔬 NKT 檢測發現</div>
+          <div class="info-item-value">${s.nktFindings || '尚未檢測'}</div>
+        </div>
+        ${s.notes ? `<div class="info-item"><div class="info-item-label">📝 備註</div><div class="info-item-value">${s.notes}</div></div>` : ''}
+      </div>
+    </div>
+    <div class="section-header fade-in stagger-3">
+      <div class="section-title">📅 訓練紀錄</div>
+    </div>
+    <div class="timeline fade-in stagger-4">
+      ${sessions.length === 0 ? '<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-title">尚無訓練紀錄</div><div class="empty-state-text">點擊「開始備課」建立第一份課表</div></div>' :
+        sessions.map((session, i) => `
+          <div class="timeline-item" onclick="navigate('session-detail', '${session.id}')">
+            <div class="timeline-dot-container">
+              <div class="timeline-dot" style="background:${i === 0 ? 'var(--accent)' : 'var(--text-muted)'}"></div>
+              ${i < sessions.length - 1 ? '<div class="timeline-line"></div>' : ''}
+            </div>
+            <div class="timeline-content">
+              <div class="timeline-date">${formatDate(session.date)}</div>
+              <div class="timeline-title">${session.sessionType}</div>
+              <div class="timeline-summary">${session.coachNotes || '無備註'}</div>
+            </div>
+          </div>
+        `).join('')}
+    </div>`;
+}
+
+function renderSessionDetail(sessionId) {
+  const session = DB.getSession(sessionId);
+  if (!session) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到紀錄</div></div>';
+  const student = DB.getStudent(session.studentId);
+
+  return `
+    <div class="prep-student-bar fade-in">
+      <div class="student-avatar" style="background:${student?.avatarColor || AVATAR_COLORS[0]}">${student?.name?.charAt(0) || '?'}</div>
+      <div>
+        <div class="student-name">${student?.name || '未知'}</div>
+        <div class="student-meta">${formatDate(session.date)} · ${session.sessionType}</div>
+      </div>
+    </div>
+    <div class="prep-section fade-in stagger-1">
+      <div class="prep-section-title">🏋️ 訓練內容</div>
+      ${session.exercises.map(ex => `
+        <div class="session-detail-exercise">
+          <div class="session-detail-exercise-name">${ex.name}</div>
+          <div class="session-detail-sets">
+            ${ex.completed.map((c, i) => `<span class="session-detail-set ${c ? 'completed' : ''}">${c ? '✅' : '⬜'} 第${i+1}組 ${ex.reps}</span>`).join('')}
+          </div>
+          ${ex.weight !== '-' ? `<div class="session-detail-quality">重量: ${ex.weight}</div>` : ''}
+          <div class="session-detail-quality">品質: ${ex.quality}</div>
+          ${ex.notes ? `<div class="session-detail-note">📝 ${ex.notes}</div>` : ''}
+        </div>`).join('')}
+    </div>
+    ${session.conditionNotes ? `
+    <div class="prep-section fade-in stagger-2">
+      <div class="prep-section-title">🏥 當日狀況</div>
+      <div class="prev-notes"><div class="prev-notes-content">${session.conditionNotes}</div></div>
+    </div>` : ''}
+    <div class="prep-section fade-in stagger-3">
+      <div class="prep-section-title">📝 教練筆記</div>
+      <div class="prev-notes"><div class="prev-notes-content">${session.coachNotes || '無'}</div></div>
+    </div>
+    ${session.nextSuggestion ? `
+    <div class="prep-section fade-in stagger-4">
+      <div class="prep-section-title">💡 下堂課建議</div>
+      <div class="prev-notes"><div class="prev-notes-content">${session.nextSuggestion}</div></div>
+    </div>` : ''}`;
+}
+
+function renderExercises() {
+  const categories = ['全部','暖身','NKT檢測','矯正動作','肌力訓練'];
+  const catIcons = { '暖身':'warmup', 'NKT檢測':'nkt', '矯正動作':'corrective', '肌力訓練':'strength' };
+  const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
+  const exercises = DB.getExercises();
+
+  return `
+    <div class="search-container fade-in">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" id="exercise-search" placeholder="搜尋動作..." oninput="filterExercises(this.value)">
+      </div>
+    </div>
+    <div class="exercise-category-tabs fade-in stagger-1" id="exercise-tabs">
+      ${categories.map(c => `<button class="category-tab ${c === '全部' ? 'active' : ''}" onclick="selectExerciseCategory('${c}')">${c}</button>`).join('')}
+    </div>
+    <div class="exercise-library-list" id="exercise-list-container">
+      ${exercises.map((e, i) => `
+        <div class="exercise-lib-card fade-in stagger-${Math.min(i+2, 6)}" data-category="${e.category}" data-name="${e.name}">
+          <div class="exercise-icon ${catIcons[e.category] || 'strength'}">${catEmojis[e.category] || '💪'}</div>
+          <div class="exercise-lib-info">
+            <div class="exercise-lib-name">${e.name}</div>
+            <div class="exercise-lib-meta">${e.target} · ${e.defaultSets}×${e.defaultReps}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderHistory() {
+  const sessions = DB.getSessions();
+  if (sessions.length === 0) {
+    return '<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-title">尚無訓練紀錄</div></div>';
+  }
+  return `
+    <div class="session-list" style="padding:12px 16px">
+      ${sessions.map((s, i) => {
+        const student = DB.getStudent(s.studentId);
+        const d = new Date(s.date);
+        return `
+          <div class="history-card fade-in stagger-${Math.min(i+1, 6)}" onclick="navigate('session-detail', '${s.id}')">
+            <div class="history-date-badge">
+              <div class="history-date-day">${d.getDate()}</div>
+              <div class="history-date-month">${d.getMonth()+1}月</div>
+            </div>
+            <div class="history-info">
+              <div class="history-student">${student?.name || '未知'}</div>
+              <div class="history-type">${s.sessionType}</div>
+              <div class="history-notes">${s.coachNotes || '無備註'}</div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
