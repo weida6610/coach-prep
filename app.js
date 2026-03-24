@@ -178,6 +178,15 @@ function saveStudentForm(existingId) {
   goBack();
 }
 
+function deleteStudentHandler(id) {
+  if (confirm('確定要永久刪除這位學員嗎？這無法復原喔！')) {
+    if (DB.deleteStudent(id)) {
+      showToast('🗑️ 學員已刪除');
+      goBack();
+    }
+  }
+}
+
 // ============================================
 // Exercise Functions
 // ============================================

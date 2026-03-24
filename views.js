@@ -104,6 +104,7 @@ function renderStudentDetail(studentId) {
     <div class="profile-actions fade-in stagger-1">
       <button class="btn-primary accent" onclick="navigate('prep', '${s.id}')">📋 開始備課</button>
       <button class="btn-primary secondary" onclick="navigate('edit-student', '${s.id}')">✏️ 編輯</button>
+      <button class="btn-primary secondary danger" onclick="deleteStudentHandler('${s.id}')" style="flex:0 0 52px; border-color:var(--danger); color:var(--danger); padding:0; display:flex; justify-content:center; align-items:center;">🗑️</button>
     </div>
     <div class="info-section fade-in stagger-2">
       <div class="info-grid">

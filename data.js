@@ -252,6 +252,18 @@ const DB = {
     return student;
   },
 
+  deleteStudent(id) {
+    const data = this._load();
+    const idx = data.students.findIndex(s => s.id === id);
+    if (idx >= 0) {
+      data.students.splice(idx, 1);
+      this._save(data);
+      this._pushToCloud('delete', 'Students', { id: id });
+      return true;
+    }
+    return false;
+  },
+
   getSessions(studentId) {
     return this._load().sessions
       .filter(s => !studentId || s.studentId === studentId)
