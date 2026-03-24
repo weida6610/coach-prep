@@ -190,6 +190,8 @@ const DB = {
 
   async syncFromCloud() {
     try {
+      await this.flushSyncQueue(); // 在抓取新資料前，先把我們斷網時累積的更動送上雲端！
+      
       const res = await fetch(GAS_URL + "?action=sync"); 
       const json = await res.json();
       if (json.success && json.db) {
@@ -206,7 +208,7 @@ const DB = {
           });
           return true;
         } else {
-          this.pushAllLocalDataToCloud(); // 初次將 Mock 資料備份上雲
+          this.pushAllLocalDataToCloud(); 
         }
       }
     } catch(err) {
@@ -216,14 +218,37 @@ const DB = {
   },
 
   async _pushToCloud(action, sheetName, payloadData) {
-    try {
-      let body = JSON.stringify({ action: action, sheetName: sheetName, data: payloadData });
-      fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: body
-      }).catch(e => console.log('Background sync error', e));
-    } catch(err) {}
+    let payload = { action, sheetName, data: payloadData };
+    fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    }).catch(e => {
+      console.log('網路不佳，儲存至離線等待序列', e);
+      let queue = JSON.parse(localStorage.getItem('coach_prep_sync_queue') || '[]');
+      queue.push(payload);
+      localStorage.setItem('coach_prep_sync_queue', JSON.stringify(queue));
+    });
+  },
+
+  async flushSyncQueue() {
+    let queue = JSON.parse(localStorage.getItem('coach_prep_sync_queue') || '[]');
+    if (queue.length === 0) return;
+    
+    let newQueue = [];
+    for (let payload of queue) {
+      try {
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('API failed');
+      } catch(e) {
+         newQueue.push(payload); // Push 失敗的保留下來
+      }
+    }
+    localStorage.setItem('coach_prep_sync_queue', JSON.stringify(newQueue));
   },
 
   pushAllLocalDataToCloud() {
