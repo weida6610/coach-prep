@@ -171,13 +171,14 @@ const TODAY_SCHEDULE = [
 // ============================================
 // Data Access Functions
 // ============================================
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEkHiKB_jsIQFe18-2Zx87mwnOehz_N1jV3HA3ZWAqY-gFJD1T3qPTq8gXhIoS47vQ/exec';
+
 const DB = {
   _key: 'coach_prep_app',
 
   _load() {
     const raw = localStorage.getItem(this._key);
     if (raw) return JSON.parse(raw);
-    // Initialize with mock data
     const data = { students: MOCK_STUDENTS, sessions: MOCK_SESSIONS, exercises: EXERCISE_LIBRARY, schedule: TODAY_SCHEDULE };
     this._save(data);
     return data;
@@ -185,6 +186,52 @@ const DB = {
 
   _save(data) {
     localStorage.setItem(this._key, JSON.stringify(data));
+  },
+
+  async syncFromCloud() {
+    try {
+      const res = await fetch(GAS_URL + "?action=sync"); 
+      const json = await res.json();
+      if (json.success && json.db) {
+        let cloudData = json.db;
+        let isCloudEmpty = (!cloudData.students || cloudData.students.length === 0) &&
+                           (!cloudData.exercises || cloudData.exercises.length === 0);
+        
+        if (!isCloudEmpty) {
+          this._save({
+            students: cloudData.students || [],
+            exercises: cloudData.exercises || [],
+            sessions: cloudData.sessions || [],
+            schedule: cloudData.schedule || []
+          });
+          return true;
+        } else {
+          this.pushAllLocalDataToCloud(); // 初次將 Mock 資料備份上雲
+        }
+      }
+    } catch(err) {
+      console.log('Sync failed', err);
+    }
+    return false;
+  },
+
+  async _pushToCloud(action, sheetName, payloadData) {
+    try {
+      let body = JSON.stringify({ action: action, sheetName: sheetName, data: payloadData });
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: body
+      }).catch(e => console.log('Background sync error', e));
+    } catch(err) {}
+  },
+
+  pushAllLocalDataToCloud() {
+    const data = this._load();
+    data.students.forEach(s => this._pushToCloud('save', 'Students', s));
+    data.exercises.forEach(e => this._pushToCloud('save', 'Exercises', e));
+    data.sessions.forEach(s => this._pushToCloud('save', 'Sessions', s));
+    data.schedule.forEach(s => this._pushToCloud('save', 'Schedule', s));
   },
 
   getStudents() { return this._load().students; },
@@ -201,6 +248,7 @@ const DB = {
       data.students.push(student);
     }
     this._save(data);
+    this._pushToCloud('save', 'Students', student);
     return student;
   },
 
@@ -220,10 +268,13 @@ const DB = {
     const idx = data.sessions.findIndex(s => s.id === session.id);
     if (idx >= 0) data.sessions[idx] = session;
     else data.sessions.push(session);
-    // Update student total sessions
+    
     const student = data.students.find(s => s.id === session.studentId);
     if (student && idx < 0) student.totalSessions = (student.totalSessions || 0) + 1;
     this._save(data);
+    
+    this._pushToCloud('save', 'Sessions', session);
+    if (student) this._pushToCloud('save', 'Students', student);
     return session;
   },
 
@@ -239,6 +290,7 @@ const DB = {
     if (idx >= 0) data.exercises[idx] = exercise;
     else data.exercises.push(exercise);
     this._save(data);
+    this._pushToCloud('save', 'Exercises', exercise);
     return exercise;
   },
 
@@ -248,6 +300,7 @@ const DB = {
     if (idx >= 0) {
       data.exercises.splice(idx, 1);
       this._save(data);
+      this._pushToCloud('delete', 'Exercises', { id: id });
       return true;
     }
     return false;

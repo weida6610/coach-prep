@@ -437,6 +437,14 @@ if ('serviceWorker' in navigator) {
 // ============================================
 // Init
 // ============================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   navigate('dashboard');
+  
+  // Background cloud sync
+  const synced = await DB.syncFromCloud();
+  if (synced) {
+    showToast('☁️ 雲端資料同步完成');
+    const current = navigationStack[navigationStack.length - 1];
+    if (current) renderView(current.view, current.param);
+  }
 });
