@@ -215,6 +215,16 @@ function saveExerciseForm() {
   goBack();
 }
 
+function deleteExerciseHandler(id, event) {
+  event.stopPropagation();
+  if (confirm('確定要刪除這個動作嗎？')) {
+    if (DB.deleteExercise(id)) {
+      showToast('✅ 動作已刪除');
+      navigate('exercises');
+    }
+  }
+}
+
 // ============================================
 // Prep Functions
 // ============================================

@@ -209,6 +209,7 @@ function renderExercises() {
             <div class="exercise-lib-name">${e.name}</div>
             <div class="exercise-lib-meta">${e.target} · ${e.defaultSets}×${e.defaultReps}</div>
           </div>
+          <button class="btn-delete-exercise" onclick="deleteExerciseHandler('${e.id}', event)">🗑️</button>
         </div>`).join('')}
     </div>`;
 }

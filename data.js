@@ -242,6 +242,17 @@ const DB = {
     return exercise;
   },
 
+  deleteExercise(id) {
+    const data = this._load();
+    const idx = data.exercises.findIndex(e => e.id === id);
+    if (idx >= 0) {
+      data.exercises.splice(idx, 1);
+      this._save(data);
+      return true;
+    }
+    return false;
+  },
+
   getSchedule() { return this._load().schedule; },
 
   resetData() {
