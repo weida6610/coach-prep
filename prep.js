@@ -131,6 +131,7 @@ ${lastSession ? `## 上次課程紀錄 (${lastSession.date})
       cues: ex.cues || '',
       isAiGenerated: true
     }));
+    currentPrepPlan.studentId = studentId;
     
     // Re-render prep view
     navigationStack.pop();
@@ -283,7 +284,11 @@ function renderPrep(studentId) {
 
   const sessions = DB.getSessions(studentId);
   const lastSession = sessions[0];
-  currentPrepPlan = generateAISuggestions(studentId);
+  
+  if (!currentPrepPlan || currentPrepPlan.studentId !== studentId) {
+    currentPrepPlan = generateAISuggestions(studentId);
+    currentPrepPlan.studentId = studentId;
+  }
 
   const catIcons = { '暖身':'warmup', 'NKT檢測':'nkt', '矯正動作':'corrective', '肌力訓練':'strength' };
   const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
