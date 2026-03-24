@@ -29,45 +29,58 @@ async function callGeminiAI(studentId) {
 
   const student = DB.getStudent(studentId);
   const sessions = DB.getSessions(studentId);
-  const lastSession = sessions[0];
   const exerciseLib = DB.getExercises();
 
-  const prompt = `你是一位專業的健身教練兼防護員助手，專長 NKT Lv.3 檢測與矯正運動。請根據以下學員資訊，產出今日課表。
+  const recentSessions = sessions.slice(0, 3).reverse(); // Oldest to newest
+  let historyText = '（無歷史紀錄）';
+  if (recentSessions.length > 0) {
+    historyText = recentSessions.map((s, i) => `
+### 歷史紀錄 ${i+1}: ${s.date} (${s.sessionType})
+- 當日狀況：${s.conditionNotes || '無'}
+- 動作：
+${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.weight} | 品質:${e.quality || ''} | 備註:${e.notes || ''}`).join('\n')}
+- 教練筆記：${s.coachNotes || '無'}
+- 下堂建議：${s.nextSuggestion || '無'}
+`).join('\n');
+  }
 
-## 學員資料
+  const libText = exerciseLib.map(e => `[${e.category}] ${e.name}`).join(', ');
+
+  // 強化版 Prompt：要求 AI 模仿前三次課表邏輯並運用學員專屬動作庫
+  const prompt = `你是一位跟隨這位教練多年的 AI 助教。
+你的任務是：**學習這位教練在過去幾堂課的「排課邏輯、動作挑選習慣與漸進式超負荷規則」，並自動產出完美銜接的「下一堂課」課表。**
+
+## 學員基本資料
 - 姓名：${student.name}
-- 年齡：${student.age || '未知'}
 - 訓練目標：${student.goals}
-- 病史/傷病：${student.medicalHistory || '無'}
-- NKT 檢測發現：${student.nktFindings || '尚未檢測'}
-- 目前訓練階段：${student.currentPhase}
-- 累計堂數：${student.totalSessions}
-- 備註：${student.notes || '無'}
+- 病史：${student.medicalHistory || '無'}
+- NKT發現：${student.nktFindings || '無'}
+- 目前階段：${student.currentPhase}
 
-${lastSession ? `## 上次課程紀錄 (${lastSession.date})
-- 類型：${lastSession.sessionType}
-- 動作：${lastSession.exercises.map(e => e.name + ' ' + e.sets + '×' + e.reps + ' ' + e.weight + ' 品質:' + e.quality + (e.notes ? ' 備註:' + e.notes : '')).join('\n  ')}
-- 當日狀況：${lastSession.conditionNotes || '無'}
-- 教練筆記：${lastSession.coachNotes || '無'}
-- 下堂課建議：${lastSession.nextSuggestion || '無'}` : '（首次上課，無歷史紀錄）'}
+## 過去上課紀錄 (由舊到新排列，請分析動作連貫性及重量成長)
+${historyText}
 
-## 要求
-請產出完整課表，包含暖身、矯正動作（如需要）、肌力訓練。
+## 動作庫參考 (請優先從以下清單挑選，維持教練的命名習慣)
+${libText}
 
-**請嚴格使用以下 JSON 格式回覆，不要加任何說明文字：**
+## 你的任務
+請輸出下一堂課的完整課表（包含暖身、矯正、主訓練），要求：
+1. 嚴格模仿教練在「過去紀錄」裡展現的課程結構與動作偏好。
+2. 若「下堂建議」中有提到加重或更換動作，請務必落實。
+3. 針對表現「優秀」的肌力動作，請自動計算並增加一點重量或次數。
+4. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列：
+
 [
   {
     "name": "動作名稱",
     "category": "暖身|NKT檢測|矯正動作|肌力訓練",
-    "target": "目標肌群",
+    "target": "目標",
     "sets": 3,
-    "reps": "10",
-    "weight": "-",
-    "cues": "動作提示"
+    "reps": "12",
+    "weight": "15kg",
+    "cues": "提示"
   }
-]
-
-只回覆 JSON 陣列，不要其他文字。`;
+]`;
 
   geminiLoading = true;
   const loadingEl = document.getElementById('gemini-result');
