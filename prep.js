@@ -10,16 +10,18 @@ let geminiLoading = false;
 // ============================================
 // Gemini AI Integration
 // ============================================
-function getApiKey() {
+function getApiKey(provider) {
+  if (provider === 'openai') return localStorage.getItem('openai_api_key') || '';
   return localStorage.getItem('gemini_api_key') || '';
 }
 
-function setApiKey(key) {
-  localStorage.setItem('gemini_api_key', key);
+function getAiProvider() {
+  return localStorage.getItem('ai_provider') || 'gemini';
 }
 
 async function callGeminiAI(studentId) {
-  const apiKey = getApiKey();
+  const provider = getAiProvider();
+  const apiKey = getApiKey(provider);
   if (!apiKey) {
     showApiKeyModal();
     return;
@@ -69,25 +71,45 @@ ${lastSession ? `## 上次課程紀錄 (${lastSession.date})
 
   geminiLoading = true;
   const loadingEl = document.getElementById('gemini-result');
-  if (loadingEl) loadingEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--accent)"><div style="font-size:2rem;margin-bottom:8px" class="spin">🧠</div>Gemini AI 正在分析學員資料並產生課表...</div>';
+  if (loadingEl) loadingEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--accent)"><div style="font-size:2rem;margin-bottom:8px" class="spin">🧠</div>正在分析學員資料並產生課表...</div>';
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
-      })
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error?.message || 'API 錯誤');
+    let text = '';
+    if (provider === 'openai') {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || 'OpenAI API 錯誤');
+      }
+      const data = await response.json();
+      text = data.choices[0].message.content;
+    } else {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || 'Gemini API 錯誤');
+      }
+      const data = await response.json();
+      text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
     // Parse JSON from response (handle markdown code blocks)
     let jsonStr = text;
@@ -113,34 +135,62 @@ ${lastSession ? `## 上次課程紀錄 (${lastSession.date})
     // Re-render prep view
     navigationStack.pop();
     navigate('prep', studentId);
-    showToast('✅ Gemini AI 課表已產生！');
+    showToast('✅ AI 課表已產生！');
     
   } catch (err) {
     geminiLoading = false;
-    console.error('Gemini API error:', err);
+    console.error('API error:', err);
     if (loadingEl) loadingEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--danger)">❌ AI 產生失敗：${err.message}<br><br><button class="btn-primary secondary" style="display:inline-flex;width:auto;padding:8px 20px" onclick="showApiKeyModal()">🔑 檢查 API Key</button></div>`;
   }
 }
 
 function showApiKeyModal() {
-  const currentKey = getApiKey();
+  const provider = getAiProvider();
+  const currentKey = getApiKey(provider);
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-header"><div class="modal-title">🔑 設定 Gemini API Key</div></div>
+    <div class="modal-header"><div class="modal-title">🔑 AI 引擎設定</div></div>
     <div class="form-section">
       <div class="form-group">
-        <label class="form-label">API Key</label>
-        <input type="password" id="api-key-input" value="${currentKey}" placeholder="貼上你的 Gemini API Key">
+        <label class="form-label">選擇 AI 引擎</label>
+        <select id="ai-provider-select" onchange="updateModalKeyInput(this.value)">
+          <option value="gemini" ${provider === 'gemini' ? 'selected' : ''}>Google Gemini (預設)</option>
+          <option value="openai" ${provider === 'openai' ? 'selected' : ''}>OpenAI (ChatGPT 4o-mini)</option>
+        </select>
       </div>
-      <p style="font-size:0.75rem;color:var(--text-secondary);line-height:1.5;margin-bottom:16px">
-        前往 <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">Google AI Studio</a> 免費取得 API Key
-      </p>
-      <button class="btn-primary accent" onclick="setApiKey(document.getElementById('api-key-input').value.trim()); closeModal(); showToast('✅ API Key 已儲存')">
-        💾 儲存
-      </button>
+      <div class="form-group">
+        <label class="form-label">API Key</label>
+        <input type="password" id="api-key-input" value="${currentKey}" placeholder="API Key">
+      </div>
+      <p id="api-link-text" style="font-size:0.75rem;color:var(--text-secondary);line-height:1.5;margin-bottom:16px"></p>
+      <button class="btn-primary accent" onclick="saveAiSettings()">💾 儲存</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
+  updateModalKeyInput(provider);
 }
+
+window.updateModalKeyInput = function(provider) {
+  const input = document.getElementById('api-key-input');
+  const linkText = document.getElementById('api-link-text');
+  input.value = getApiKey(provider);
+  if (provider === 'openai') {
+    input.placeholder = "sk-...";
+    linkText.innerHTML = '前往 <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--accent)">OpenAI Platform</a> 取得金鑰';
+  } else {
+    input.placeholder = "AIzaSy...";
+    linkText.innerHTML = '前往 <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">Google AI Studio</a> 取得金鑰';
+  }
+};
+
+window.saveAiSettings = function() {
+  const provider = document.getElementById('ai-provider-select').value;
+  const key = document.getElementById('api-key-input').value.trim();
+  localStorage.setItem('ai_provider', provider);
+  if (provider === 'openai') localStorage.setItem('openai_api_key', key);
+  else localStorage.setItem('gemini_api_key', key);
+  closeModal();
+  showToast('✅ AI 設定已儲存');
+};
 
 function addAiExerciseToLibrary(idx) {
   const ex = currentPrepPlan[idx];
