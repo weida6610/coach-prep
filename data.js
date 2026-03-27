@@ -706,8 +706,33 @@ const DB = {
     return true;
   },
 
-  // ── 課表（保留介面，由 Google Calendar 填入）──
+  // ── 課表 ──
   getSchedule() {
     return [...this._cache.schedule];
+  },
+
+  // ── Google Calendar 同步 ──
+  async syncTodayCalendar(dateStr) {
+    const GAS_CAL = 'https://script.google.com/macros/s/AKfycbxQJ-S2CaelR82FLOZ1hXZ613FvFwFa89LWQd4rwBGz-dSHaadIeF0jUciwQb1GQHQk/exec';
+    try {
+      const res = await fetch(`${GAS_CAL}?action=calendar&date=${dateStr}`);
+      const json = await res.json();
+      if (json.success && json.schedule) {
+        this._cache.schedule = json.schedule;
+        return true;
+      }
+    } catch(e) {
+      console.log('Calendar sync failed', e);
+    }
+    return false;
+  },
+
+  async checkAndSyncDailySchedule() {
+    const today = typeof getTodayStr === 'function' ? getTodayStr() : new Date().toISOString().slice(0,10);
+    const lastSync = localStorage.getItem('cal_sync_date');
+    if (lastSync !== today) {
+      const ok = await this.syncTodayCalendar(today);
+      if (ok) localStorage.setItem('cal_sync_date', today);
+    }
   },
 };

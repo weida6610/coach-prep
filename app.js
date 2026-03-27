@@ -456,4 +456,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await DB.init();
   navigate('dashboard');
+  DB.checkAndSyncDailySchedule();
 });
