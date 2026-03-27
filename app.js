@@ -140,8 +140,8 @@ function renderView(view, param) {
       break;
 
     case 'history':
-      title.textContent = '訓練紀錄';
-      content.innerHTML = renderHistory();
+      title.textContent = param === 'today' ? '今日紀錄' : '訓練紀錄';
+      content.innerHTML = renderHistory(param);
       break;
 
     default:

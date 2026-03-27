@@ -25,7 +25,7 @@ function renderDashboard() {
           <div class="stat-number">${students.length}</div>
           <div class="stat-label">學員數</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" onclick="navigate('history','today')" style="cursor:pointer">
           <div class="stat-number">${todaySessions.length}</div>
           <div class="stat-label">已記錄</div>
         </div>
@@ -268,12 +268,15 @@ function renderEditSession(sessionId) {
     </div>`;
 }
 
-function renderHistory() {
-  const sessions = DB.getSessions();
+function renderHistory(filter) {
+  let sessions = DB.getSessions();
+  const isToday = filter === 'today';
+  if (isToday) sessions = sessions.filter(s => s.date === getTodayStr());
   if (sessions.length === 0) {
-    return '<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-title">尚無訓練紀錄</div></div>';
+    return `<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-title">${isToday ? '今天還沒有課程紀錄' : '尚無訓練紀錄'}</div></div>`;
   }
   return `
+    ${isToday ? `<div style="padding:10px 16px 0"><span style="background:var(--accent);color:#000;padding:3px 10px;border-radius:20px;font-size:0.78rem;font-weight:600">今日紀錄</span></div>` : ''}
     <div class="session-list" style="padding:12px 16px">
       ${sessions.map((s, i) => {
         const student = DB.getStudent(s.studentId);
