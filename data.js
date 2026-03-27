@@ -562,15 +562,17 @@ const DB = {
   // ── 初始化：從 Firestore 載入資料，設定即時監聽 ──
   async init() {
     try {
-      const [studSnap, sesSnap, exSnap] = await Promise.all([
+      const [studSnap, sesSnap, exSnap, schSnap] = await Promise.all([
         _fsdb.collection('students').get(),
         _fsdb.collection('sessions').get(),
         _fsdb.collection('exercises').get(),
+        _fsdb.collection('schedule').get(),
       ]);
 
       this._cache.students  = studSnap.docs.map(d => d.data());
       this._cache.sessions  = sesSnap.docs.map(d => d.data());
       this._cache.exercises = exSnap.docs.map(d => d.data());
+      this._cache.schedule  = schSnap.docs.map(d => d.data());
 
       // 第一次使用：把預設資料寫入 Firestore
       if (this._cache.students.length === 0) await this._seed();
@@ -584,6 +586,9 @@ const DB = {
       });
       _fsdb.collection('exercises').onSnapshot(snap => {
         this._cache.exercises = snap.docs.map(d => d.data());
+      });
+      _fsdb.collection('schedule').onSnapshot(snap => {
+        this._cache.schedule = snap.docs.map(d => d.data());
       });
     } catch(e) {
       console.error('Firebase 初始化失敗', e);
@@ -683,6 +688,21 @@ const DB = {
     return session;
   },
 
+  deleteSession(id) {
+    const idx = this._cache.sessions.findIndex(s => s.id === id);
+    if (idx < 0) return false;
+    const session = this._cache.sessions[idx];
+    this._cache.sessions.splice(idx, 1);
+    _fsdb.collection('sessions').doc(id).delete();
+    // 遞減學員堂數
+    const student = this._cache.students.find(s => s.id === session.studentId);
+    if (student && student.totalSessions > 0) {
+      student.totalSessions--;
+      _fsdb.collection('students').doc(student.id).set(student);
+    }
+    return true;
+  },
+
   // ── 動作庫 ──
   getExercises(category) {
     const exs = [...this._cache.exercises];
@@ -706,33 +726,25 @@ const DB = {
     return true;
   },
 
-  // ── 課表 ──
+  // ── 今日課表 ──
   getSchedule() {
-    return [...this._cache.schedule];
+    return [...this._cache.schedule].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   },
 
-  // ── Google Calendar 同步 ──
-  async syncTodayCalendar(dateStr) {
-    const GAS_CAL = 'https://script.google.com/macros/s/AKfycbxQJ-S2CaelR82FLOZ1hXZ613FvFwFa89LWQd4rwBGz-dSHaadIeF0jUciwQb1GQHQk/exec';
-    try {
-      const res = await fetch(`${GAS_CAL}?action=calendar&date=${dateStr}`);
-      const json = await res.json();
-      if (json.success && json.schedule) {
-        this._cache.schedule = json.schedule;
-        return true;
-      }
-    } catch(e) {
-      console.log('Calendar sync failed', e);
-    }
-    return false;
+  saveScheduleItem(item) {
+    if (!item.id) item.id = 'SCH-' + Date.now();
+    const idx = this._cache.schedule.findIndex(s => s.id === item.id);
+    if (idx >= 0) this._cache.schedule[idx] = item;
+    else this._cache.schedule.push(item);
+    _fsdb.collection('schedule').doc(item.id).set(item);
+    return item;
   },
 
-  async checkAndSyncDailySchedule() {
-    const today = typeof getTodayStr === 'function' ? getTodayStr() : new Date().toISOString().slice(0,10);
-    const lastSync = localStorage.getItem('cal_sync_date');
-    if (lastSync !== today) {
-      const ok = await this.syncTodayCalendar(today);
-      if (ok) localStorage.setItem('cal_sync_date', today);
-    }
+  deleteScheduleItem(id) {
+    const idx = this._cache.schedule.findIndex(s => s.id === id);
+    if (idx < 0) return false;
+    this._cache.schedule.splice(idx, 1);
+    _fsdb.collection('schedule').doc(id).delete();
+    return true;
   },
 };

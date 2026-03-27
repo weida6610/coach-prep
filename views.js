@@ -4,8 +4,9 @@
 
 function renderDashboard() {
   const students = DB.getStudents();
-  const schedule = DB.getSchedule();
-  const todaySessions = DB.getSessions().filter(s => s.date === getTodayStr());
+  const todayStr = getTodayStr();
+  const schedule = DB.getSchedule().filter(s => s.date === todayStr);
+  const todaySessions = DB.getSessions().filter(s => s.date === todayStr);
   const now = new Date();
   const weekday = ['日','一','二','三','四','五','六'][now.getDay()];
   const month = now.getMonth() + 1;
@@ -32,27 +33,36 @@ function renderDashboard() {
     </div>
     <div class="section-header fade-in stagger-1">
       <div class="section-title">📋 今日課程</div>
+      <button class="btn-icon-sm" onclick="addToScheduleModal()" title="新增今日課程"
+        style="background:var(--accent);color:#000;border:none;border-radius:50%;width:32px;height:32px;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
     </div>
     <div class="session-list">
-      ${schedule.map((s, i) => {
-        const student = DB.getStudent(s.studentId);
-        if (!student) return '';
-        return `
-          <div class="session-card fade-in stagger-${Math.min(i+2, 6)}" onclick="navigate('prep', '${s.studentId}')">
-            <div class="session-time">
-              <div class="session-time-hour">${s.time}</div>
-              <div class="session-time-period">${s.period}</div>
-            </div>
-            <div class="session-divider" style="background:${student.avatarColor}"></div>
-            <div class="session-info">
-              <div class="session-student-name">${student.name}</div>
-              <div class="session-type">${s.type} · 第${student.totalSessions + 1}堂</div>
-            </div>
-            <div class="session-status ${s.status}">
-              ${s.status === 'pending' ? '📝' : s.status === 'prepped' ? '✅' : '🏁'}
-            </div>
-          </div>`;
-      }).join('')}
+      ${schedule.length === 0 ? `
+        <div class="empty-state" style="padding:32px 0">
+          <div class="empty-state-icon">📅</div>
+          <div class="empty-state-title">今天還沒有課程</div>
+          <div class="empty-state-text">點右上角 + 新增今日學員</div>
+        </div>` :
+        schedule.map((s, i) => {
+          const student = DB.getStudent(s.studentId);
+          if (!student) return '';
+          return `
+            <div class="session-card fade-in stagger-${Math.min(i+2, 6)}">
+              <div class="session-time" onclick="navigate('prep', '${s.studentId}')" style="cursor:pointer">
+                <div class="session-time-hour">${s.time || '--:--'}</div>
+                <div class="session-time-period">${s.period || ''}</div>
+              </div>
+              <div class="session-divider" style="background:${student.avatarColor}"></div>
+              <div class="session-info" onclick="navigate('prep', '${s.studentId}')" style="cursor:pointer;flex:1">
+                <div class="session-student-name">${student.name}</div>
+                <div class="session-type">${s.type} · 第${student.totalSessions + 1}堂</div>
+              </div>
+              <div class="session-status ${s.status}" style="margin-right:4px">
+                ${s.status === 'pending' ? '📝' : s.status === 'prepped' ? '✅' : '🏁'}
+              </div>
+              <button onclick="deleteScheduleItemHandler('${s.id}')" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;padding:4px 6px">×</button>
+            </div>`;
+        }).join('')}
     </div>`;
 }
 
@@ -152,10 +162,12 @@ function renderSessionDetail(sessionId) {
   return `
     <div class="prep-student-bar fade-in">
       <div class="student-avatar" style="background:${student?.avatarColor || AVATAR_COLORS[0]}">${student?.name?.charAt(0) || '?'}</div>
-      <div>
+      <div style="flex:1">
         <div class="student-name">${student?.name || '未知'}</div>
         <div class="student-meta">${formatDate(session.date)} · ${session.sessionType}</div>
       </div>
+      <button class="btn-primary secondary" style="flex:0 0 auto;padding:6px 14px;font-size:0.85rem" onclick="navigate('edit-session','${session.id}')">✏️ 編輯</button>
+      <button class="btn-primary secondary danger" style="flex:0 0 auto;padding:6px 10px;font-size:0.85rem;margin-left:6px;border-color:var(--danger);color:var(--danger)" onclick="deleteSessionHandler('${session.id}')">🗑️</button>
     </div>
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title">🏋️ 訓練內容</div>
@@ -212,6 +224,47 @@ function renderExercises() {
           </div>
           <button class="btn-delete-exercise" onclick="deleteExerciseHandler('${e.id}', event)">🗑️</button>
         </div>`).join('')}
+    </div>`;
+}
+
+function renderEditSession(sessionId) {
+  const session = DB.getSession(sessionId);
+  if (!session) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到紀錄</div></div>';
+  const student = DB.getStudent(session.studentId);
+  const sessionTypes = ['NKT評估','核心控制','肌力訓練','混合訓練','體能訓練','其他'];
+
+  return `
+    <div class="prep-student-bar fade-in">
+      <div class="student-avatar" style="background:${student?.avatarColor || AVATAR_COLORS[0]}">${student?.name?.charAt(0) || '?'}</div>
+      <div>
+        <div class="student-name">${student?.name || '未知'}</div>
+        <div class="student-meta">編輯課程紀錄</div>
+      </div>
+    </div>
+    <div class="form-container fade-in stagger-1" style="padding:16px">
+      <div class="form-group">
+        <label class="form-label">上課日期</label>
+        <input type="date" id="fe-date" class="form-input" value="${session.date}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">課程類型</label>
+        <select id="fe-type" class="form-input">
+          ${sessionTypes.map(t => `<option ${t === session.sessionType ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">🏥 當日狀況</label>
+        <textarea id="fe-condition" class="form-input" rows="2" style="resize:none">${session.conditionNotes || ''}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">📝 教練筆記</label>
+        <textarea id="fe-notes" class="form-input" rows="3" style="resize:none">${session.coachNotes || ''}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">💡 下堂課建議</label>
+        <textarea id="fe-next" class="form-input" rows="2" style="resize:none">${session.nextSuggestion || ''}</textarea>
+      </div>
+      <button class="btn-primary accent" style="width:100%;margin-top:8px" onclick="saveEditSessionForm('${sessionId}')">儲存變更</button>
     </div>`;
 }
 
