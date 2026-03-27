@@ -378,6 +378,8 @@ function addExerciseToPrep(exerciseId, studentId) {
 // Session Functions
 // ============================================
 function startSession(studentId) {
+  const notes = document.getElementById('prep-notes')?.value || '';
+  if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
   currentSessionState = null;
   navigate('session', studentId);
 }
@@ -419,7 +421,8 @@ function toggleSet(idx) {
   const cards = document.querySelectorAll('.set-card');
   cards[idx]?.classList.toggle('completed');
   const repsEl = cards[idx]?.querySelector('.set-reps');
-  if (repsEl) repsEl.textContent = ex.completedSets[idx] ? '✅' : ex.reps;
+  const setReps = ex.allSets?.[idx]?.reps || ex.reps;
+  if (repsEl) repsEl.textContent = ex.completedSets[idx] ? '✅' : setReps;
 }
 
 function setQuality(q) {
@@ -433,16 +436,6 @@ function updateExerciseNote(val) {
   currentSessionState.exercises[currentSessionState.currentExIdx].notes = val;
 }
 
-function adjustWeight(delta) {
-  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  const match = ex.actualWeight.match(/(\d+)/);
-  if (match) {
-    const newVal = Math.max(0, parseInt(match[1]) + delta * 2);
-    ex.actualWeight = ex.actualWeight.replace(match[1], String(newVal));
-    const el = document.getElementById('current-weight');
-    if (el) el.textContent = ex.actualWeight;
-  }
-}
 
 function toggleCondition(c) {
   const idx = currentSessionState.conditions.indexOf(c);
@@ -474,9 +467,13 @@ function saveSession() {
     sessionType: determineSessionType(state.exercises),
     exercises: state.exercises.map(e => ({
       exerciseId: e.exerciseId, name: e.name,
-      sets: e.sets, reps: e.reps, weight: e.actualWeight,
-      completed: e.completedSets, quality: e.quality || '未評',
-      notes: e.notes
+      sets: (e.allSets||[]).length || e.sets,
+      reps: e.reps,
+      weight: e.actualWeight || e.weight,
+      completed: e.completedSets,
+      quality: e.quality || '未評',
+      notes: e.notes,
+      subSets: e.subSets || []
     })),
     conditionNotes: state.conditions.join('、'),
     coachNotes: state.overallNotes,
@@ -484,6 +481,7 @@ function saveSession() {
   };
 
   DB.saveSession(session);
+  localStorage.removeItem(`prep_${state.studentId}`);
   currentSessionState = null;
   currentPrepPlan = [];
   if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }

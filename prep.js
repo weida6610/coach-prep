@@ -4,7 +4,6 @@
 
 // State for current prep/session
 let currentPrepPlan = [];
-let currentAiSuggestions = [];
 let currentSessionState = null;
 let geminiLoading = false;
 
@@ -32,7 +31,7 @@ async function callGeminiAI(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
-  const recentSessions = sessions.slice(0, 3).reverse();
+  const recentSessions = sessions.slice(0, 3).reverse(); // Oldest to newest
   let historyText = '（無歷史紀錄）';
   if (recentSessions.length > 0) {
     historyText = recentSessions.map((s, i) => `
@@ -46,12 +45,10 @@ ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.wei
   }
 
   const libText = exerciseLib.map(e => `[${e.category}] ${e.name}`).join(', ');
-  const n1Session = sessions[0];
-  const n1Type = getModuleType(n1Session);
-  const targetModule = n1Type === 'pull' ? '上肢推＋下肢推（Push 模組）' : '上肢拉＋下肢拉（Pull 模組）';
 
-  const prompt = `你是一位跟隨這位教練多年的 AI 助教，專精 NKT 神經動能療法與功能性矯正訓練。
-你的任務是：學習這位教練的排課邏輯，產出符合 A/B 模組交替原則的「下一堂課」建議動作清單。
+  // 強化版 Prompt：要求 AI 模仿前三次課表邏輯並運用學員專屬動作庫
+  const prompt = `你是一位跟隨這位教練多年的 AI 助教。
+你的任務是：**學習這位教練在過去幾堂課的「排課邏輯、動作挑選習慣與漸進式超負荷規則」，並自動產出完美銜接的「下一堂課」課表。**
 
 ## 學員基本資料
 - 姓名：${student.name}
@@ -60,73 +57,86 @@ ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.wei
 - NKT發現：${student.nktFindings || '無'}
 - 目前階段：${student.currentPhase}
 
-## 過去上課紀錄（由舊到新）
+## 過去上課紀錄 (由舊到新排列，請分析動作連貫性及重量成長)
 ${historyText}
 
-## 本次模組方向
-根據 A/B 交替邏輯，本次應排：**${targetModule}**
-
-## 動作庫參考
+## 動作庫參考 (請優先從以下清單挑選，維持教練的命名習慣)
 ${libText}
 
-## 輸出要求
-請提供 3-5 個「額外 AI 建議動作」（不含已在課表中的基本動作），要求：
-1. 符合本次模組方向（${targetModule}）
-2. 模仿教練的課表風格與動作命名習慣
-3. 針對 NKT 發現提供相應激活或測試動作
-4. 重量請參考歷史紀錄做漸進推算
-5. 【重要】只回傳 JSON 陣列，不要任何說明文字：
+## 你的任務
+請輸出下一堂課的完整課表（包含暖身、矯正、主訓練），要求：
+1. 嚴格模仿教練在「過去紀錄」裡展現的課程結構與動作偏好。
+2. 若「下堂建議」中有提到加重或更換動作，請務必落實。
+3. 針對表現「優秀」的肌力動作，請自動計算並增加一點重量或次數。
+4. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列：
 
 [
   {
     "name": "動作名稱",
     "category": "暖身|NKT檢測|矯正動作|肌力訓練",
-    "target": "目標肌群",
+    "target": "目標",
     "sets": 3,
-    "reps": "10",
+    "reps": "12",
     "weight": "15kg",
     "cues": "提示"
   }
 ]`;
 
   geminiLoading = true;
-  const loadingEl = document.getElementById('ai-suggestions-content');
-  if (loadingEl) loadingEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--accent)"><div style="font-size:2rem;margin-bottom:8px" class="spin">🧠</div>AI 分析中...</div>';
+  const loadingEl = document.getElementById('gemini-result');
+  if (loadingEl) loadingEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--accent)"><div style="font-size:2rem;margin-bottom:8px" class="spin">🧠</div>正在分析學員資料並產生課表...</div>';
 
   try {
     let text = '';
     if (provider === 'openai') {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature: 0.7 })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7
+        })
       });
-      if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || 'OpenAI API 錯誤'); }
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || 'OpenAI API 錯誤');
+      }
       const data = await response.json();
       text = data.choices[0].message.content;
     } else {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 2048 } })
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+        })
       });
-      if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || 'Gemini API 錯誤'); }
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || 'Gemini API 錯誤');
+      }
       const data = await response.json();
       text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     }
-
+    
+    // Parse JSON from response (handle markdown code blocks)
     let jsonStr = text;
     const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
     if (jsonMatch) jsonStr = jsonMatch[0];
-
+    
     const exercises = JSON.parse(jsonStr);
     geminiLoading = false;
-
-    // Populate AI suggestions (do NOT replace main plan)
-    currentAiSuggestions = exercises.map(ex => ({
+    
+    // Replace current plan with Gemini's plan
+    currentPrepPlan = exercises.map(ex => ({
       exerciseId: 'AI-' + Math.random().toString(36).substr(2, 6),
       name: ex.name,
-      category: ex.category || '肌力訓練',
+      category: ex.category,
       target: ex.target || '',
       sets: ex.sets || 3,
       reps: String(ex.reps || '10'),
@@ -134,64 +144,18 @@ ${libText}
       cues: ex.cues || '',
       isAiGenerated: true
     }));
-
-    // Re-render AI suggestions section only
-    const aiContent = document.getElementById('ai-suggestions-content');
-    if (aiContent) aiContent.innerHTML = renderAiSuggestionsContent(studentId);
-    showToast('✅ AI 建議已產生！');
-
+    currentPrepPlan.studentId = studentId;
+    
+    // Re-render prep view
+    navigationStack.pop();
+    navigate('prep', studentId);
+    showToast('✅ AI 課表已產生！');
+    
   } catch (err) {
     geminiLoading = false;
     console.error('API error:', err);
-    const aiContent = document.getElementById('ai-suggestions-content');
-    if (aiContent) aiContent.innerHTML = `<div style="text-align:center;padding:16px;color:var(--danger)">❌ ${err.message}<br><br><button class="btn-primary secondary" style="display:inline-flex;width:auto;padding:8px 20px" onclick="showApiKeyModal()">🔑 檢查 API Key</button></div>`;
+    if (loadingEl) loadingEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--danger)">❌ AI 產生失敗：${err.message}<br><br><button class="btn-primary secondary" style="display:inline-flex;width:auto;padding:8px 20px" onclick="showApiKeyModal()">🔑 檢查 API Key</button></div>`;
   }
-}
-
-function renderAiSuggestionsContent(studentId) {
-  if (currentAiSuggestions.length === 0) {
-    return '<div style="color:var(--text-muted);text-align:center;padding:16px;font-size:0.85rem">點擊「產生 AI 建議」讓 AI 分析學員歷史並推薦動作</div>';
-  }
-  const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
-  return currentAiSuggestions.map((ex, idx) => {
-    const existsInLib = DB.getExercises().some(e => e.name === ex.name);
-    return `
-    <div class="exercise-item" style="border-left:2px solid var(--accent);margin-bottom:8px">
-      <div class="exercise-icon strength" style="font-size:1rem">${catEmojis[ex.category] || '💪'}</div>
-      <div class="exercise-details" style="flex:1">
-        <div class="exercise-name">${ex.name}</div>
-        <div class="exercise-spec">${ex.sets}×${ex.reps}${ex.weight !== '-' ? ' · ' + ex.weight : ''}</div>
-        ${ex.cues ? `<div style="font-size:0.7rem;color:var(--text-muted)">${ex.cues}</div>` : ''}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
-        <button onclick="addAiSuggestionToPrep(${idx},'${studentId}')" style="font-size:0.7rem;padding:4px 8px;border-radius:var(--radius-sm);background:var(--accent);color:#000;border:none;cursor:pointer;white-space:nowrap">+ 加入備課</button>
-        ${!existsInLib ? `<button id="ai-lib-${idx}" onclick="addAiSuggestionToLibrary(${idx})" style="font-size:0.7rem;padding:4px 8px;border-radius:var(--radius-sm);background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border);cursor:pointer;white-space:nowrap">📚 加入庫</button>` : '<span style="font-size:0.65rem;color:var(--text-muted)">已在庫中</span>'}
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function addAiSuggestionToPrep(idx, studentId) {
-  const ex = currentAiSuggestions[idx];
-  if (!ex) return;
-  currentPrepPlan.push({ ...ex });
-  showToast(`✅ 已加入「${ex.name}」`);
-  // Re-render prep view to show the added exercise
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
-}
-
-function addAiSuggestionToLibrary(idx) {
-  const ex = currentAiSuggestions[idx];
-  if (!ex) return;
-  DB.saveExercise({
-    name: ex.name, category: ex.category,
-    target: ex.target || '', defaultSets: ex.sets,
-    defaultReps: String(ex.reps), cues: ex.cues || ''
-  });
-  showToast(`✅ 「${ex.name}」已加入動作庫`);
-  const btn = document.getElementById(`ai-lib-${idx}`);
-  if (btn) { btn.innerHTML = '✅ 已加入'; btn.disabled = true; btn.style.color = 'var(--success)'; }
 }
 
 function showApiKeyModal() {
@@ -242,200 +206,91 @@ window.saveAiSettings = function() {
   showToast('✅ AI 設定已儲存');
 };
 
-// ============================================
-// Module Type Detection (A/B Logic)
-// ============================================
-function getModuleType(session) {
-  if (!session || !session.exercises) return 'push'; // default to push if no history
-
-  const names = session.exercises.map(e => e.name || '').join(' ');
-
-  const pullKeywords = ['划船', '下拉', 'Chin', '引體', '面拉', 'Face Pull', '闊背', 'lat', 'row'];
-  const pushKeywords = ['伏地挺身', '臥推', '肩推', '三頭', 'push', 'Push', 'press'];
-  const hingeKeywords = ['羅馬尼亞', '硬舉', 'RDL', '單腿RDL'];
-  const squatKeywords = ['深蹲', 'Lunge', '弓步', '臀推', '分腿', 'squat'];
-
-  const hasPull = pullKeywords.some(k => names.includes(k));
-  const hasPush = pushKeywords.some(k => names.includes(k));
-  const hasHinge = hingeKeywords.some(k => names.includes(k));
-  const hasSquat = squatKeywords.some(k => names.includes(k));
-
-  const pullScore = (hasPull ? 1 : 0) + (hasHinge ? 1 : 0);
-  const pushScore = (hasPush ? 1 : 0) + (hasSquat ? 1 : 0);
-
-  return pullScore >= pushScore ? 'pull' : 'push';
-}
-
-// ============================================
-// AI Local Suggestions (Rule-based)
-// ============================================
-function generateAISuggestions(studentId) {
-  const student = DB.getStudent(studentId);
-  if (!student) return [];
-
-  const sessions = DB.getSessions(studentId); // sorted desc: [N-1, N-2, ...]
-  const n1Session = sessions[0]; // last session
-  const n2Session = sessions[1]; // session before last
-
-  const plan = [];
-
-  // ---- Opening: always start with lumbar breathing ----
-  plan.push({
-    exerciseId: 'custom',
-    name: '仰臥腰椎控制呼吸',
-    category: '矯正動作',
-    target: '核心穩定',
-    sets: 1,
-    reps: '5次呼吸',
-    weight: '-',
-    cues: '骨盆腰椎規則建立'
-  });
-
-  // ---- Determine module based on N-1 vs N-2 alternation ----
-  const n1Type = getModuleType(n1Session); // what last session was
-  const targetType = n1Type === 'pull' ? 'push' : 'pull'; // next should be opposite
-
-  if (n2Session) {
-    // Base this session on N-2 exercises (same module as today), with progression
-    const baseExercises = n2Session.exercises.filter(e =>
-      e.name !== '仰臥腰椎控制呼吸' &&
-      e.name !== '反向捲腹' &&
-      e.category !== '暖身'
-    );
-
-    baseExercises.forEach(e => {
-      // Slight progressive overload for exercises rated 優秀/良好
-      let weight = e.weight || '-';
-      // Keep same weight - coach will adjust during prep
-
-      plan.push({
-        exerciseId: e.exerciseId || 'custom',
-        name: e.name,
-        category: e.category || '肌力訓練',
-        target: e.target || '',
-        sets: e.sets || 3,
-        reps: String(e.reps || '10'),
-        weight: weight,
-        cues: e.cues || ''
-      });
-    });
-
-    // Add core work if last same-module session had it
-    const hadReverseAbsCrunch = n2Session.exercises.some(e => e.name && e.name.includes('反向捲腹'));
-    if (hadReverseAbsCrunch) {
-      plan.splice(1, 0, {
-        exerciseId: 'custom', name: '反向捲腹',
-        category: '矯正動作', target: '核心',
-        sets: 2, reps: '8', weight: '-', cues: '控制骨盆腰椎規則'
-      });
-    }
-  } else if (n1Session) {
-    // Only one session exists — generate the complementary module
-    addDefaultModuleExercises(plan, targetType, student);
-  } else {
-    // No history — generate an assessment + basic plan
-    plan.push({ exerciseId:'custom', name:'脊椎旋轉test', category:'NKT檢測', target:'脊椎', sets:1, reps:'測試', weight:'-', cues:'' });
-    plan.push({ exerciseId:'E031', name:'啞鈴羅馬尼亞硬舉', category:'肌力訓練', target:'後側鏈', sets:3, reps:'8', weight:'空手', cues:'髖鉸鏈，微曲膝' });
-    plan.push({ exerciseId:'E030', name:'高腳杯深蹲', category:'肌力訓練', target:'股四頭/臀大肌', sets:3, reps:'8', weight:'空手', cues:'挺胸，膝蓋對齊腳尖' });
-  }
-
-  return plan;
-}
-
-function addDefaultModuleExercises(plan, moduleType, student) {
-  if (moduleType === 'push') {
-    plan.push({ exerciseId:'custom', name:'伏地挺身', category:'肌力訓練', target:'胸肩三頭', sets:3, reps:'8', weight:'-', cues:'扶槓鈴退階，核心收緊' });
-    plan.push({ exerciseId:'E030', name:'高腳杯深蹲', category:'肌力訓練', target:'股四頭/臀大肌', sets:4, reps:'8', weight:'空手', cues:'挺胸，膝蓋對齊腳尖' });
-  } else {
-    plan.push({ exerciseId:'custom', name:'Cable坐姿划船', category:'肌力訓練', target:'背闊肌/菱形肌', sets:3, reps:'10', weight:'42lb', cues:'肩胛先啟動再拉' });
-    plan.push({ exerciseId:'E031', name:'啞鈴羅馬尼亞硬舉', category:'肌力訓練', target:'後側鏈', sets:4, reps:'8', weight:'空手', cues:'髖鉸鏈，微曲膝' });
-  }
-}
-
-// ============================================
-// Add exercise to library (from prep plan)
-// ============================================
 function addAiExerciseToLibrary(idx) {
   const ex = currentPrepPlan[idx];
   if (!ex) return;
+  
   DB.saveExercise({
-    name: ex.name, category: ex.category,
-    target: ex.target || '', defaultSets: ex.sets,
-    defaultReps: String(ex.reps), cues: ex.cues || ''
+    name: ex.name,
+    category: ex.category,
+    target: ex.target || '',
+    defaultSets: ex.sets,
+    defaultReps: String(ex.reps),
+    cues: ex.cues || ''
   });
+  
   showToast(`✅ 「${ex.name}」已加入動作庫`);
+  // Update button visual
   const btn = document.getElementById(`save-lib-${idx}`);
-  if (btn) { btn.innerHTML = '✅ 已加入'; btn.style.color = 'var(--success)'; btn.disabled = true; }
+  if (btn) {
+    btn.innerHTML = '✅ 已加入';
+    btn.style.color = 'var(--success)';
+    btn.disabled = true;
+  }
 }
 
-// ============================================
-// Prep Exercise Inline Editing
-// ============================================
-function adjustPrepSets(idx, delta) {
-  if (idx < 0 || idx >= currentPrepPlan.length) return;
-  currentPrepPlan[idx].sets = Math.max(1, (parseInt(currentPrepPlan[idx].sets) || 1) + delta);
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
-}
-
-function updatePrepField(idx, field, value) {
-  if (idx < 0 || idx >= currentPrepPlan.length) return;
-  currentPrepPlan[idx][field] = value;
-  // No re-render to avoid losing input focus
-}
-
-// ============================================
-// Save Prep Plan Modal
-// ============================================
-function showSavePrepModal(studentId) {
-  const today = getTodayStr();
-  const notes = document.getElementById('prep-notes')?.value || '';
-  document.getElementById('modal-content').innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-header"><div class="modal-title">💾 儲存備課計畫</div></div>
-    <div class="form-section">
-      <div class="form-group">
-        <label class="form-label">上課日期</label>
-        <input type="date" id="prep-save-date" value="${today}">
-      </div>
-      <div class="form-group">
-        <label class="form-label">上課時間</label>
-        <input type="time" id="prep-save-time" value="09:00">
-      </div>
-      <button class="btn-primary accent" onclick="confirmSavePrepPlan('${studentId}', '${notes.replace(/'/g,'&#39;')}')">💾 確認儲存</button>
-    </div>`;
-  document.getElementById('modal-overlay').classList.add('active');
-}
-
-function confirmSavePrepPlan(studentId, notes) {
-  const date = document.getElementById('prep-save-date').value;
-  const time = document.getElementById('prep-save-time').value;
-  if (!date || !time) { showToast('❌ 請填寫日期與時間'); return; }
-
+function generateAISuggestions(studentId) {
   const student = DB.getStudent(studentId);
-  const planId = `PP-${date.replace(/-/g,'')}-${time.replace(':','')}-${studentId}`;
+  const sessions = DB.getSessions(studentId);
+  const lastSession = sessions[0];
+  const plan = [];
 
-  const plan = {
-    id: planId,
-    studentId,
-    studentName: student?.name || '',
-    scheduledDate: date,
-    scheduledTime: time,
-    exercises: currentPrepPlan.filter(e => typeof e === 'object' && e.name),
-    status: 'confirmed',
-    notes: notes || '',
-    autoGenerated: false,
-    createdAt: Date.now()
-  };
+  // Always start with warmup
+  plan.push({ exerciseId:'E003', name:'90/90 髖關節活動度', category:'暖身', sets:2, reps:'8', weight:'-', cues:'骨盆保持中立' });
 
-  DB.savePrepPlan(plan);
-  closeModal();
-  showToast('✅ 備課計畫已儲存！');
+  if (student.currentPhase === '矯正期') {
+    plan.push({ exerciseId:'E004', name:'貓牛式', category:'暖身', sets:2, reps:'10', weight:'-', cues:'配合呼吸' });
+    // NKT-based suggestions
+    if (student.nktFindings?.includes('臀中肌')) {
+      plan.push({ exerciseId:'E020', name:'Clam Shell', category:'矯正動作', sets:3, reps:'15', weight:'彈力帶', cues:'骨盆不旋轉' });
+      plan.push({ exerciseId:'E023', name:'側走怪獸步', category:'矯正動作', sets:3, reps:'12步/側', weight:'彈力帶', cues:'膝蓋對齊腳尖' });
+    }
+    if (student.nktFindings?.includes('核心') || student.nktFindings?.includes('腹橫')) {
+      plan.push({ exerciseId:'E021', name:'Dead Bug', category:'矯正動作', sets:3, reps:'10', weight:'-', cues:'腰椎貼地' });
+      plan.push({ exerciseId:'E022', name:'Bird Dog', category:'矯正動作', sets:3, reps:'10/側', weight:'-', cues:'軀幹穩定' });
+    }
+    if (student.nktFindings?.includes('肩')) {
+      plan.push({ exerciseId:'E025', name:'肩胛骨YTWL', category:'矯正動作', sets:3, reps:'8', weight:'-', cues:'肩胛下壓後縮' });
+    }
+    if (student.nktFindings?.includes('臀大肌')) {
+      plan.push({ exerciseId:'E026', name:'髖屈肌伸展+啟動', category:'矯正動作', sets:2, reps:'30秒/側', weight:'-', cues:'臀部夾緊' });
+    }
+    if (plan.length < 5) {
+      plan.push({ exerciseId:'E021', name:'Dead Bug', category:'矯正動作', sets:3, reps:'10', weight:'-', cues:'腰椎貼地' });
+    }
+  } else {
+    // For strength/performance phases
+    plan.push({ exerciseId:'E005', name:'世界最偉大伸展', category:'暖身', sets:2, reps:'5/側', weight:'-', cues:'動作慢且到位' });
+
+    // Add corrective based on NKT findings
+    if (student.nktFindings?.includes('臀中肌')) {
+      plan.push({ exerciseId:'E020', name:'Clam Shell', category:'矯正動作', sets:2, reps:'12', weight:'彈力帶', cues:'暖身啟動用' });
+    }
+
+    // Progressive overload from last session
+    if (lastSession) {
+      const strengthExercises = lastSession.exercises.filter(e => {
+        const lib = DB.getExercises().find(l => l.id === e.exerciseId);
+        return lib?.category === '肌力訓練';
+      });
+      strengthExercises.forEach(e => {
+        let newWeight = e.weight;
+        if (e.quality === '優秀' && e.weight !== '-') {
+          const numMatch = e.weight.match(/(\d+)/);
+          if (numMatch) newWeight = e.weight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
+        }
+        plan.push({ exerciseId:e.exerciseId, name:e.name, category:'肌力訓練', sets:e.sets, reps:e.reps, weight:newWeight, cues:'' });
+      });
+    }
+    if (plan.filter(p => p.category === '肌力訓練').length === 0) {
+      plan.push({ exerciseId:'E030', name:'高腳杯深蹲', category:'肌力訓練', sets:4, reps:'10', weight:'12kg', cues:'膝蓋對齊腳尖' });
+      plan.push({ exerciseId:'E031', name:'啞鈴羅馬尼亞硬舉', category:'肌力訓練', sets:4, reps:'10', weight:'10kg*2', cues:'髖鉸鏈' });
+      plan.push({ exerciseId:'E033', name:'單臂啞鈴划船', category:'肌力訓練', sets:3, reps:'12', weight:'12kg', cues:'肩胛先啟動' });
+    }
+  }
+  return plan;
 }
 
-// ============================================
-// Render Prep View
-// ============================================
 function renderPrep(studentId) {
   const student = DB.getStudent(studentId);
   if (!student) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
@@ -443,122 +298,95 @@ function renderPrep(studentId) {
   const sessions = DB.getSessions(studentId);
   const lastSession = sessions[0];
 
-  // Init plan if not already set for this student
-  if (!currentPrepPlan || currentPrepPlan.length === 0 || currentPrepPlan.studentId !== studentId) {
-    currentPrepPlan = generateAISuggestions(studentId);
+  if (!currentPrepPlan || currentPrepPlan.studentId !== studentId) {
+    const saved = localStorage.getItem(`prep_${studentId}`);
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        currentPrepPlan = data.exercises || [];
+        currentPrepPlan._prepNotes = data.notes || '';
+      } catch(e) { currentPrepPlan = generateAISuggestions(studentId); }
+    } else {
+      currentPrepPlan = generateAISuggestions(studentId);
+    }
     currentPrepPlan.studentId = studentId;
-    currentAiSuggestions = []; // reset AI suggestions for new student
   }
 
-  const catIcons = { '暖身':'warmup', 'NKT檢測':'nkt', '矯正動作':'corrective', '肌力訓練':'strength' };
-  const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
-
-  // Determine current module type for display
-  const n1Session = sessions[0];
-  const n1Type = getModuleType(n1Session);
-  const todayModule = n1Type === 'pull' ? '🏋️ Push 模組' : '🚣 Pull 模組';
-
-  // Group exercises by category
-  const groups = {};
-  currentPrepPlan.forEach(ex => {
-    if (!groups[ex.category]) groups[ex.category] = [];
-    groups[ex.category].push(ex);
-  });
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
 
   return `
     <div class="prep-student-bar fade-in">
       <div class="student-avatar" style="background:${student.avatarColor}">${student.name.charAt(0)}</div>
       <div>
-        <div class="student-name">${student.name} <span class="tag tag-accent">${student.currentPhase}</span> <span class="tag" style="background:rgba(0,229,160,0.15);color:var(--accent)">${todayModule}</span></div>
+        <div class="student-name">${student.name} <span class="tag tag-accent">${student.currentPhase}</span></div>
         <div class="student-meta">第 ${student.totalSessions + 1} 堂 · ${student.goals}</div>
       </div>
     </div>
-
     ${lastSession ? `
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title">📌 上次重點筆記 <span class="text-muted" style="font-size:0.7rem">${formatDate(lastSession.date)}</span></div>
-      <div class="prev-notes">
-        <div class="prev-notes-content">
-          <ul>
-            ${lastSession.coachNotes ? `<li>${lastSession.coachNotes}</li>` : ''}
-            ${lastSession.nextSuggestion ? `<li>💡 建議：${lastSession.nextSuggestion}</li>` : ''}
-            ${lastSession.conditionNotes ? `<li>狀態：${lastSession.conditionNotes}</li>` : ''}
-          </ul>
-        </div>
-      </div>
+      <div class="prev-notes"><div class="prev-notes-content"><ul>
+        ${lastSession.coachNotes ? `<li>${lastSession.coachNotes}</li>` : ''}
+        ${lastSession.nextSuggestion ? `<li>💡 建議：${lastSession.nextSuggestion}</li>` : ''}
+        ${lastSession.conditionNotes ? `<li>狀態：${lastSession.conditionNotes}</li>` : ''}
+      </ul></div></div>
     </div>` : ''}
-
     <div class="prep-section fade-in stagger-2">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="prep-section-title" style="margin-bottom:0">📋 本次課表</div>
-        <span style="font-size:0.72rem;color:var(--text-muted)">點擊組數 ± 可調整</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="prep-section-title" style="margin-bottom:0">📋 課表動作</div>
+        <button onclick="callGeminiAI('${studentId}')" style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:var(--radius-full);background:linear-gradient(135deg,rgba(108,92,231,0.3),rgba(0,229,160,0.3));border:1px solid rgba(108,92,231,0.4);color:var(--text-primary);font-size:0.78rem;font-weight:600;cursor:pointer">🧠 AI</button>
       </div>
-
-      ${Object.entries(groups).map(([cat, exercises]) => `
-        <div class="exercise-group">
-          <div class="exercise-group-title">${catEmojis[cat] || '💪'} ${cat}</div>
-          ${exercises.map((ex) => {
-            const globalIdx = currentPrepPlan.indexOf(ex);
-            const existsInLib = DB.getExercises().some(e => e.name === ex.name);
-            return `
-            <div class="exercise-item" id="prep-ex-${globalIdx}">
-              <div class="exercise-icon ${catIcons[cat] || 'strength'}">${catEmojis[cat] || '💪'}</div>
-              <div class="exercise-details" style="flex:1;min-width:0">
-                <div class="exercise-name">${ex.name}</div>
-                <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
-                  <div style="display:flex;align-items:center;gap:4px">
-                    <button onclick="adjustPrepSets(${globalIdx},-1)" style="width:22px;height:22px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">−</button>
-                    <span style="font-size:0.82rem;font-weight:600;min-width:16px;text-align:center">${ex.sets}</span>
-                    <button onclick="adjustPrepSets(${globalIdx},1)" style="width:22px;height:22px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
-                    <span style="font-size:0.75rem;color:var(--text-muted)">組</span>
-                  </div>
-                  <span style="color:var(--text-muted);font-size:0.75rem">×</span>
-                  <input type="text" value="${ex.reps}" onchange="updatePrepField(${globalIdx},'reps',this.value)"
-                    style="width:48px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:0.78rem;text-align:center">
-                  <span style="color:var(--text-muted);font-size:0.75rem">次</span>
-                  <input type="text" value="${ex.weight}" onchange="updatePrepField(${globalIdx},'weight',this.value)" placeholder="重量"
-                    style="width:64px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:0.78rem;text-align:center">
-                </div>
-                ${ex.cues ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px">${ex.cues}</div>` : ''}
-              </div>
-              <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
-                ${ex.isAiGenerated && !existsInLib ? `<button id="save-lib-${globalIdx}" onclick="addAiExerciseToLibrary(${globalIdx}); event.stopPropagation();" style="font-size:0.65rem;padding:3px 6px;border-radius:4px;background:var(--bg-card);color:var(--accent);border:1px solid var(--accent);cursor:pointer;white-space:nowrap">📚 加入庫</button>` : ''}
-                <button onclick="removePrepExercise(${globalIdx}); event.stopPropagation();" style="font-size:0.75rem;padding:3px 6px;border-radius:4px;background:transparent;color:var(--text-muted);border:1px solid var(--border);cursor:pointer">✕</button>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>`).join('')}
-
-      <button class="btn-add-exercise" onclick="showExercisePicker('${studentId}')">+ 新增動作</button>
+      <div id="gemini-result"></div>
+      <div style="display:flex;gap:4px;padding:0 4px 4px;font-size:0.68rem;color:var(--text-muted);font-weight:500">
+        <div style="flex:1"></div>
+        <div style="width:66px;text-align:center">重量</div>
+        <div style="width:46px;text-align:center">次數</div>
+        <div style="width:38px;text-align:center">組數</div>
+        <div style="width:54px"></div>
+      </div>
+      ${currentPrepPlan.map((ex, idx) => `
+        <div style="padding:8px 4px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:26px;height:26px;font-size:0.8rem;flex-shrink:0">${catEmojis[ex.category]||'💪'}</div>
+            <div style="flex:1;min-width:0;font-size:0.88rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ex.name}</div>
+            <button onclick="addSubSet(${idx})" title="新增不同重量" style="background:var(--accent);color:#000;border:none;border-radius:50%;width:22px;height:22px;font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0">+</button>
+            <button onclick="removePrepExercise(${idx})" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;flex-shrink:0;padding:0 2px;width:22px;height:22px;display:flex;align-items:center;justify-content:center">✕</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;padding-left:32px">
+            <input value="${ex.weight!=='-'?ex.weight:''}" placeholder="重量" oninput="updatePrepExercise(${idx},'weight',this.value)" style="width:66px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+            <input value="${ex.reps}" placeholder="次" oninput="updatePrepExercise(${idx},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+            <input type="number" min="1" value="${ex.sets}" placeholder="組" oninput="updatePrepExercise(${idx},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+          </div>
+          ${(ex.subSets||[]).map((ss,si) => `
+          <div style="display:flex;align-items:center;gap:4px;padding-left:32px;margin-top:4px">
+            <span style="color:var(--accent);font-size:0.7rem;width:10px;flex-shrink:0">↳</span>
+            <input value="${ss.weight||''}" placeholder="重量" oninput="updateSubSet(${idx},${si},'weight',this.value)" style="width:60px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+            <input value="${ss.reps||''}" placeholder="次" oninput="updateSubSet(${idx},${si},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+            <input type="number" min="1" value="${ss.sets||1}" placeholder="組" oninput="updateSubSet(${idx},${si},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+            <button onclick="removeSubSet(${idx},${si})" style="background:none;border:none;color:var(--text-muted);font-size:0.9rem;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
+          </div>`).join('')}
+        </div>
+      `).join('')}
+      <button class="btn-add-exercise" onclick="showExercisePicker('${studentId}')" style="margin-top:8px">+ 新增動作</button>
     </div>
-
-    <div class="prep-section fade-in stagger-3">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="prep-section-title" style="margin-bottom:0">🤖 AI 建議區 <span class="ai-badge">✨ 輔助</span></div>
-        <button onclick="callGeminiAI('${studentId}')" style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:var(--radius-full);background:linear-gradient(135deg,rgba(108,92,231,0.3),rgba(0,229,160,0.3));border:1px solid rgba(108,92,231,0.4);color:var(--text-primary);font-size:0.75rem;font-weight:600;cursor:pointer">🧠 產生建議</button>
-      </div>
-      <div id="ai-suggestions-content">
-        ${renderAiSuggestionsContent(studentId)}
-      </div>
-    </div>
-
-    <div class="prep-section fade-in stagger-4">
+    <div class="prep-section">
       <div class="form-group">
         <label class="form-label">📝 備課備註（選填）</label>
-        <textarea id="prep-notes" placeholder="今天需要特別注意的事項..."></textarea>
+        <textarea id="prep-notes" placeholder="今天需要特別注意的事項...">${currentPrepPlan._prepNotes||''}</textarea>
       </div>
     </div>
-
-    <div style="height:100px"></div>
+    <div style="height:80px"></div>
     <div class="floating-actions">
-      <button class="btn-primary secondary" onclick="showSavePrepModal('${studentId}')" style="flex:0.45">💾 儲存備課</button>
+      <button class="btn-primary secondary" onclick="savePrepPlan('${studentId}')" style="flex:0.45">💾 儲存備課</button>
       <button class="btn-primary accent" onclick="startSession('${studentId}')">▶ 開始上課</button>
     </div>`;
 }
 
-// ============================================
-// Render Session View
-// ============================================
 function renderSession(studentId) {
   const student = DB.getStudent(studentId);
   if (!student || currentPrepPlan.length === 0) {
@@ -571,13 +399,25 @@ function renderSession(studentId) {
       studentId,
       startTime: Date.now(),
       currentExIdx: 0,
-      exercises: currentPrepPlan.map(ex => ({
-        ...ex,
-        completedSets: new Array(ex.sets).fill(false),
-        quality: '',
-        notes: '',
-        actualWeight: ex.weight
-      })),
+      exercises: currentPrepPlan.map(ex => {
+        const allSets = [];
+        for (let i = 0; i < (parseInt(ex.sets) || 1); i++) {
+          allSets.push({ reps: ex.reps, weight: ex.weight !== '-' ? ex.weight : '' });
+        }
+        (ex.subSets || []).forEach(ss => {
+          for (let i = 0; i < (parseInt(ss.sets) || 1); i++) {
+            allSets.push({ reps: ss.reps || ex.reps, weight: ss.weight || '' });
+          }
+        });
+        return {
+          ...ex,
+          allSets,
+          completedSets: new Array(allSets.length).fill(false),
+          quality: '',
+          notes: '',
+          actualWeight: ex.weight !== '-' ? ex.weight : ''
+        };
+      }),
       conditions: [],
       overallNotes: ''
     };
@@ -585,14 +425,15 @@ function renderSession(studentId) {
 
   const state = currentSessionState;
   const ex = state.exercises[state.currentExIdx];
-  const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
   const qualities = [
-    { emoji:'😊', label:'優秀' },
-    { emoji:'🙂', label:'良好' },
-    { emoji:'😐', label:'尚可' },
-    { emoji:'😓', label:'需改善' }
+    { emoji:'😊', label:'優秀' }, { emoji:'🙂', label:'良好' },
+    { emoji:'😐', label:'尚可' }, { emoji:'😓', label:'需改善' }
   ];
   const conditionOptions = ['😴 疲勞','🤕 疼痛','💪 狀態佳','🤒 身體不適','😰 壓力大','🌙 睡眠不足'];
+
+  const uniqueSpecs = [...new Set(ex.allSets.map(s => `${s.weight?s.weight+'×':''}${s.reps}`))].join(' / ');
 
   return `
     <div class="session-active-bar fade-in">
@@ -610,26 +451,17 @@ function renderSession(studentId) {
         <div>
           <div class="active-exercise-number">動作 ${state.currentExIdx + 1} / ${state.exercises.length}</div>
           <div class="active-exercise-title">${ex.name}</div>
-          <div class="active-exercise-target">目標: ${ex.sets}×${ex.reps}</div>
+          <div class="active-exercise-target">目標: ${uniqueSpecs}</div>
         </div>
-        <div class="exercise-icon ${ex.category === '暖身' ? 'warmup' : ex.category === '矯正動作' ? 'corrective' : 'strength'}" style="width:48px;height:48px;font-size:1.4rem">${catEmojis[ex.category] || '💪'}</div>
+        <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:48px;height:48px;font-size:1.4rem">${catEmojis[ex.category]||'💪'}</div>
       </div>
       ${ex.cues ? `<div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:16px;padding:8px 12px;background:var(--bg-card);border-radius:var(--radius-sm)">💡 ${ex.cues}</div>` : ''}
-      ${ex.actualWeight !== '-' ? `
-      <div class="weight-adjuster">
-        <button class="weight-btn" onclick="adjustWeight(-1)">−</button>
-        <div class="weight-display">
-          <div class="weight-value" id="current-weight">${ex.actualWeight}</div>
-          <div class="weight-unit">重量</div>
-        </div>
-        <button class="weight-btn" onclick="adjustWeight(1)">+</button>
-      </div>` : ''}
       <div class="sets-grid">
-        ${ex.completedSets.map((done, i) => `
-          <div class="set-card ${done ? 'completed' : ''}" onclick="toggleSet(${i})">
+        ${ex.allSets.map((s, i) => `
+          <div class="set-card ${ex.completedSets[i] ? 'completed' : ''}" onclick="toggleSet(${i})">
             <div class="set-number">第 ${i+1} 組</div>
-            <div class="set-reps">${done ? '✅' : ex.reps}</div>
-            ${ex.actualWeight !== '-' ? `<div class="set-weight">${ex.actualWeight}</div>` : ''}
+            <div class="set-reps">${ex.completedSets[i] ? '✅' : s.reps}</div>
+            ${s.weight ? `<div class="set-weight">${s.weight}</div>` : ''}
           </div>`).join('')}
       </div>
       <div class="prep-section-title mb-8">動作品質</div>
@@ -640,7 +472,7 @@ function renderSession(studentId) {
           </button>`).join('')}
       </div>
       <div class="quick-note mb-16">
-        <textarea id="exercise-note" placeholder="快速備註（如：第3組有代償、NKT發現...）" oninput="updateExerciseNote(this.value)">${ex.notes}</textarea>
+        <textarea id="exercise-note" placeholder="快速備註（如：第3組有代償）" oninput="updateExerciseNote(this.value)">${ex.notes}</textarea>
       </div>
     </div>
     ${state.currentExIdx === state.exercises.length - 1 ? `
@@ -651,21 +483,93 @@ function renderSession(studentId) {
       </div>
       <div class="form-group">
         <label class="form-label">📝 課後總結 / 下堂課建議</label>
-        <textarea id="overall-notes" placeholder="整體觀察、NKT發現、下次重點..." oninput="currentSessionState.overallNotes=this.value">${state.overallNotes}</textarea>
+        <textarea id="overall-notes" placeholder="整體觀察、下次重點..." oninput="currentSessionState.overallNotes=this.value">${state.overallNotes}</textarea>
       </div>
     </div>` : ''}
     <div style="height:80px"></div>
     <div class="exercise-nav">
-      <button class="btn-primary secondary" onclick="prevExercise()" ${state.currentExIdx === 0 ? 'disabled style="opacity:0.3;flex:0.3"' : 'style="flex:0.3"'}>← 上一個</button>
+      <button class="btn-primary secondary" onclick="showSessionAddExercise()" style="flex:0 0 44px;padding:0;font-size:1.3rem;display:flex;align-items:center;justify-content:center" title="臨時新增動作">＋</button>
+      <button class="btn-primary secondary" onclick="prevExercise()" ${state.currentExIdx === 0 ? 'disabled style="opacity:0.3"' : ''}>← 上一個</button>
       ${state.currentExIdx < state.exercises.length - 1 ?
-        `<button class="btn-primary accent" onclick="nextExercise()">下一個動作 →</button>` :
-        `<button class="btn-primary accent" onclick="saveSession()" style="background:linear-gradient(135deg, #51cf66, #00b4d8)">💾 儲存並結束</button>`}
+        `<button class="btn-primary accent" onclick="nextExercise()">下一個 →</button>` :
+        `<button class="btn-primary accent" onclick="saveSession()" style="background:linear-gradient(135deg, #51cf66, #00b4d8)">💾 結束</button>`}
     </div>`;
 }
 
-// ============================================
-// Student / Exercise Form Renderers
-// ============================================
+// ── Prep helpers ──
+function updatePrepExercise(idx, field, val) {
+  if (!currentPrepPlan[idx]) return;
+  currentPrepPlan[idx][field] = field === 'sets' ? (parseInt(val) || 1) : val;
+}
+
+function addSubSet(idx) {
+  if (!currentPrepPlan[idx]) return;
+  if (!currentPrepPlan[idx].subSets) currentPrepPlan[idx].subSets = [];
+  const ex = currentPrepPlan[idx];
+  currentPrepPlan[idx].subSets.push({ weight: '', reps: ex.reps, sets: parseInt(ex.sets) || 1 });
+  const curr = navigationStack[navigationStack.length - 1];
+  renderView(curr.view, curr.param);
+}
+
+function removeSubSet(idx, subIdx) {
+  currentPrepPlan[idx]?.subSets?.splice(subIdx, 1);
+  const curr = navigationStack[navigationStack.length - 1];
+  renderView(curr.view, curr.param);
+}
+
+function updateSubSet(idx, subIdx, field, val) {
+  if (!currentPrepPlan[idx]?.subSets?.[subIdx]) return;
+  currentPrepPlan[idx].subSets[subIdx][field] = field === 'sets' ? (parseInt(val) || 1) : val;
+}
+
+function savePrepPlan(studentId) {
+  const notes = document.getElementById('prep-notes')?.value || '';
+  currentPrepPlan._prepNotes = notes;
+  localStorage.setItem(`prep_${studentId}`, JSON.stringify({ exercises: currentPrepPlan.map(e => ({...e})), notes }));
+  showToast('✅ 備課已儲存');
+}
+
+function showSessionAddExercise() {
+  const exercises = DB.getExercises();
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">臨時新增動作</div></div>
+    <div style="padding:0 16px 8px">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" placeholder="搜尋動作..." oninput="filterModalExercises(this.value)">
+      </div>
+    </div>
+    <div style="padding:0 16px 24px;max-height:50vh;overflow-y:auto" id="modal-exercise-list">
+      ${exercises.map(e => `
+        <div class="exercise-lib-card" data-name="${e.name}" onclick="addLibExerciseToSession('${e.id}')">
+          <div class="exercise-icon ${catIcons[e.category]||'full'}">${catEmojis[e.category]||'💪'}</div>
+          <div class="exercise-lib-info">
+            <div class="exercise-lib-name">${e.name}</div>
+            <div class="exercise-lib-meta">${e.target} · ${e.defaultSets}×${e.defaultReps}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function addLibExerciseToSession(exerciseId) {
+  const ex = DB.getExercises().find(e => e.id === exerciseId);
+  if (!ex || !currentSessionState) return;
+  const allSets = Array.from({ length: ex.defaultSets }, () => ({ reps: ex.defaultReps, weight: '' }));
+  currentSessionState.exercises.push({
+    exerciseId: ex.id, name: ex.name, category: ex.category,
+    sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', subSets: [],
+    allSets, completedSets: new Array(allSets.length).fill(false),
+    quality: '', notes: '', actualWeight: ''
+  });
+  closeModal();
+  showToast(`✅ 已加入 ${ex.name}`);
+  renderView('session', currentSessionState.studentId);
+}
+
 function renderAddStudent(studentId) {
   const student = studentId ? DB.getStudent(studentId) : null;
   const isEdit = !!student;
@@ -727,10 +631,12 @@ function renderAddExercise() {
       <div class="form-group">
         <label class="form-label">分類</label>
         <select id="fe-category">
-          <option value="暖身">暖身</option>
-          <option value="NKT檢測">NKT檢測</option>
-          <option value="矯正動作">矯正動作</option>
-          <option value="肌力訓練" selected>肌力訓練</option>
+          <option value="NKT評估">NKT評估</option>
+          <option value="核心控制">核心控制</option>
+          <option value="上肢推">上肢推</option>
+          <option value="上肢拉">上肢拉</option>
+          <option value="下肢" selected>下肢</option>
+          <option value="全身">全身</option>
         </select>
       </div>
       <div class="form-group">
