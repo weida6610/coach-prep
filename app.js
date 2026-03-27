@@ -34,7 +34,7 @@ function navigate(view, param) {
 }
 
 function goBack() {
-  navigationStack.pop();
+  navigationStack.pop(); // current
   const prev = navigationStack.pop();
   if (prev) navigate(prev.view, prev.param);
   else navigate('dashboard');
@@ -142,33 +142,9 @@ function renderView(view, param) {
       content.innerHTML = renderDashboard();
   }
 
+  // Scroll to top
   content.scrollTop = 0;
   window.scrollTo(0, 0);
-}
-
-// ============================================
-// Open Prep Plan from Dashboard
-// ============================================
-function openPrepPlan(planId) {
-  const plan = DB.getPrepPlan(planId);
-  if (!plan) { showToast('❌ 找不到備課計畫'); return; }
-
-  if (!plan.studentId) {
-    // Student not matched — go to student selection
-    showToast('⚠️ 此學員尚未對應，請先在學員管理新增');
-    return;
-  }
-
-  // Load saved plan exercises into currentPrepPlan
-  if (plan.exercises && plan.exercises.length > 0) {
-    currentPrepPlan = plan.exercises.map(e => ({ ...e }));
-    currentPrepPlan.studentId = plan.studentId;
-  } else {
-    currentPrepPlan = [];
-    currentPrepPlan.studentId = plan.studentId;
-  }
-
-  navigate('prep', plan.studentId);
 }
 
 // ============================================
@@ -308,6 +284,7 @@ function addExerciseToPrep(exerciseId, studentId) {
     });
     closeModal();
     showToast(`✅ 已加入 ${ex.name}`);
+    // Re-render prep
     navigationStack.pop();
     navigate('prep', studentId);
   }
@@ -387,6 +364,7 @@ function toggleCondition(c) {
   const idx = currentSessionState.conditions.indexOf(c);
   if (idx >= 0) currentSessionState.conditions.splice(idx, 1);
   else currentSessionState.conditions.push(c);
+  // Re-render just the tag
   event.target.classList.toggle('selected');
 }
 
@@ -406,10 +384,9 @@ function prevExercise() {
 
 function saveSession() {
   const state = currentSessionState;
-  const today = getTodayStr();
   const session = {
     studentId: state.studentId,
-    date: today,
+    date: getTodayStr(),
     sessionType: determineSessionType(state.exercises),
     exercises: state.exercises.map(e => ({
       exerciseId: e.exerciseId, name: e.name,
@@ -423,18 +400,8 @@ function saveSession() {
   };
 
   DB.saveSession(session);
-
-  // Mark today's PrepPlan as completed if one exists for this student
-  const todayPlans = DB.getPrepPlans(today);
-  const matchedPlan = todayPlans.find(p => p.studentId === state.studentId);
-  if (matchedPlan) {
-    matchedPlan.status = 'completed';
-    DB.savePrepPlan(matchedPlan);
-  }
-
   currentSessionState = null;
   currentPrepPlan = [];
-  currentAiSuggestions = [];
   if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
   showToast('✅ 課程紀錄已儲存！');
   navigationStack = [];
@@ -444,10 +411,10 @@ function saveSession() {
 function determineSessionType(exercises) {
   const cats = exercises.map(e => e.category);
   if (cats.includes('NKT檢測')) return 'NKT檢測';
-  const hasCorrective = cats.includes('矯正動作');
+  const hasCorrectiveex = cats.includes('矯正動作');
   const hasStrength = cats.includes('肌力訓練');
-  if (hasCorrective && hasStrength) return '混合';
-  if (hasCorrective) return '矯正訓練';
+  if (hasCorrectiveex && hasStrength) return '混合';
+  if (hasCorrectiveex) return '矯正訓練';
   if (hasStrength) return '肌力訓練';
   return '其他';
 }
@@ -480,26 +447,13 @@ if ('serviceWorker' in navigator) {
 // Init
 // ============================================
 document.addEventListener('DOMContentLoaded', async () => {
+  // 顯示連線中畫面
+  document.getElementById('app-content').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;height:65vh;flex-direction:column;gap:14px">
+      <div style="width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite"></div>
+      <div style="color:var(--text-muted);font-size:0.9rem">連線中…</div>
+    </div>`;
+
+  await DB.init();
   navigate('dashboard');
-
-  // Background cloud sync
-  const synced = await DB.syncFromCloud();
-  if (synced) {
-    showToast('☁️ 雲端資料同步完成');
-    const current = navigationStack[navigationStack.length - 1];
-    if (current) renderView(current.view, current.param);
-  }
-
-  // Feature 5: Auto-sync today's Google Calendar and generate prep plans
-  try {
-    const calendarSynced = await DB.checkAndSyncDailySchedule();
-    if (calendarSynced) {
-      showToast('📅 今日課表已自動備好！');
-      // Re-render dashboard to show new prep plans
-      const current = navigationStack[navigationStack.length - 1];
-      if (current && current.view === 'dashboard') renderView('dashboard');
-    }
-  } catch(e) {
-    console.log('Calendar sync error:', e);
-  }
 });
