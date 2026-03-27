@@ -98,7 +98,6 @@ const MOCK_STUDENTS = [
 ];
 
 const MOCK_SESSIONS = [
-  // 王小明 recent sessions
   {
     id:'LOG-20260322-S001', studentId:'S001', date:'2026-03-22',
     sessionType:'混合',
@@ -127,7 +126,6 @@ const MOCK_SESSIONS = [
     coachNotes:'深蹲第3-4組膝內夾，加入Clam Shell強化臀中肌。整體肌力有進步。',
     nextSuggestion:'加入Clam Shell暖身，深蹲嘗試14kg'
   },
-  // 李美玲
   {
     id:'LOG-20260321-S002', studentId:'S002', date:'2026-03-21',
     sessionType:'矯正訓練',
@@ -141,7 +139,6 @@ const MOCK_SESSIONS = [
     coachNotes:'Dead Bug第3組腹橫肌控制不足導致腰椎代償，需退階到屈膝版本直到穩定。整體進步中。',
     nextSuggestion:'Dead Bug暫退階至屈膝版，加入呼吸訓練強化核心啟動'
   },
-  // 陳大偉
   {
     id:'LOG-20260322-S003', studentId:'S003', date:'2026-03-22',
     sessionType:'肌力訓練',
@@ -158,7 +155,7 @@ const MOCK_SESSIONS = [
   },
 ];
 
-// Today's schedule mock
+// Today's schedule mock (fallback when no PrepPlans)
 const TODAY_SCHEDULE = [
   { time:'09:00', period:'AM', studentId:'S003', type:'肌力訓練', status:'pending' },
   { time:'10:30', period:'AM', studentId:'S001', type:'混合訓練', status:'pending' },
@@ -171,15 +168,26 @@ const TODAY_SCHEDULE = [
 // ============================================
 // Data Access Functions
 // ============================================
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEkHiKB_jsIQFe18-2Zx87mwnOehz_N1jV3HA3ZWAqY-gFJD1T3qPTq8gXhIoS47vQ/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxQJ-S2CaelR82FLOZ1hXZ613FvFwFa89LWQd4rwBGz-dSHaadIeF0jUciwQb1GQHQk/exec';
 
 const DB = {
   _key: 'coach_prep_app',
 
   _load() {
     const raw = localStorage.getItem(this._key);
-    if (raw) return JSON.parse(raw);
-    const data = { students: MOCK_STUDENTS, sessions: MOCK_SESSIONS, exercises: EXERCISE_LIBRARY, schedule: TODAY_SCHEDULE };
+    if (raw) {
+      const data = JSON.parse(raw);
+      // Backward compatibility: add prepPlans if missing
+      if (!data.prepPlans) data.prepPlans = [];
+      return data;
+    }
+    const data = {
+      students: MOCK_STUDENTS,
+      sessions: MOCK_SESSIONS,
+      exercises: EXERCISE_LIBRARY,
+      schedule: TODAY_SCHEDULE,
+      prepPlans: []
+    };
     this._save(data);
     return data;
   },
@@ -190,25 +198,26 @@ const DB = {
 
   async syncFromCloud() {
     try {
-      await this.flushSyncQueue(); // 在抓取新資料前，先把我們斷網時累積的更動送上雲端！
-      
-      const res = await fetch(GAS_URL + "?action=sync"); 
+      await this.flushSyncQueue();
+
+      const res = await fetch(GAS_URL + "?action=sync");
       const json = await res.json();
       if (json.success && json.db) {
         let cloudData = json.db;
         let isCloudEmpty = (!cloudData.students || cloudData.students.length === 0) &&
                            (!cloudData.exercises || cloudData.exercises.length === 0);
-        
+
         if (!isCloudEmpty) {
           this._save({
             students: cloudData.students || [],
             exercises: cloudData.exercises || [],
             sessions: cloudData.sessions || [],
-            schedule: cloudData.schedule || []
+            schedule: cloudData.schedule || [],
+            prepPlans: cloudData.prepplans || cloudData.PrepPlans || []
           });
           return true;
         } else {
-          this.pushAllLocalDataToCloud(); 
+          this.pushAllLocalDataToCloud();
         }
       }
     } catch(err) {
@@ -234,7 +243,7 @@ const DB = {
   async flushSyncQueue() {
     let queue = JSON.parse(localStorage.getItem('coach_prep_sync_queue') || '[]');
     if (queue.length === 0) return;
-    
+
     let newQueue = [];
     for (let payload of queue) {
       try {
@@ -245,7 +254,7 @@ const DB = {
         });
         if (!res.ok) throw new Error('API failed');
       } catch(e) {
-         newQueue.push(payload); // Push 失敗的保留下來
+        newQueue.push(payload);
       }
     }
     localStorage.setItem('coach_prep_sync_queue', JSON.stringify(newQueue));
@@ -257,8 +266,10 @@ const DB = {
     data.exercises.forEach(e => this._pushToCloud('save', 'Exercises', e));
     data.sessions.forEach(s => this._pushToCloud('save', 'Sessions', s));
     data.schedule.forEach(s => this._pushToCloud('save', 'Schedule', s));
+    (data.prepPlans || []).forEach(p => this._pushToCloud('save', 'PrepPlans', p));
   },
 
+  // ---- Students ----
   getStudents() { return this._load().students; },
   getStudent(id) { return this.getStudents().find(s => s.id === id); },
 
@@ -289,6 +300,7 @@ const DB = {
     return false;
   },
 
+  // ---- Sessions ----
   getSessions(studentId) {
     return this._load().sessions
       .filter(s => !studentId || s.studentId === studentId)
@@ -305,16 +317,17 @@ const DB = {
     const idx = data.sessions.findIndex(s => s.id === session.id);
     if (idx >= 0) data.sessions[idx] = session;
     else data.sessions.push(session);
-    
+
     const student = data.students.find(s => s.id === session.studentId);
     if (student && idx < 0) student.totalSessions = (student.totalSessions || 0) + 1;
     this._save(data);
-    
+
     this._pushToCloud('save', 'Sessions', session);
     if (student) this._pushToCloud('save', 'Students', student);
     return session;
   },
 
+  // ---- Exercises ----
   getExercises(category) {
     const exs = this._load().exercises;
     return category && category !== '全部' ? exs.filter(e => e.category === category) : exs;
@@ -343,7 +356,108 @@ const DB = {
     return false;
   },
 
+  // ---- Schedule (legacy) ----
   getSchedule() { return this._load().schedule; },
+
+  // ---- PrepPlans ----
+  getPrepPlans(date) {
+    const plans = this._load().prepPlans || [];
+    if (date) return plans.filter(p => p.scheduledDate === date);
+    return plans;
+  },
+
+  getPrepPlan(id) {
+    return (this._load().prepPlans || []).find(p => p.id === id);
+  },
+
+  savePrepPlan(plan) {
+    const data = this._load();
+    if (!data.prepPlans) data.prepPlans = [];
+    const idx = data.prepPlans.findIndex(p => p.id === plan.id);
+    if (idx >= 0) data.prepPlans[idx] = plan;
+    else data.prepPlans.push(plan);
+    this._save(data);
+    this._pushToCloud('save', 'PrepPlans', plan);
+    return plan;
+  },
+
+  deletePrepPlan(id) {
+    const data = this._load();
+    if (!data.prepPlans) return false;
+    const idx = data.prepPlans.findIndex(p => p.id === id);
+    if (idx >= 0) {
+      data.prepPlans.splice(idx, 1);
+      this._save(data);
+      this._pushToCloud('delete', 'PrepPlans', { id });
+      return true;
+    }
+    return false;
+  },
+
+  // ---- Calendar & Auto Sync ----
+  async syncTodayCalendar(date) {
+    try {
+      const res = await fetch(GAS_URL + '?action=calendar&date=' + date);
+      const json = await res.json();
+      if (json.success && json.schedule) return json.schedule;
+    } catch (err) {
+      console.log('Calendar fetch failed', err);
+    }
+    return [];
+  },
+
+  async checkAndSyncDailySchedule() {
+    // getTodayStr is defined in app.js but available globally when called
+    const today = (typeof getTodayStr === 'function') ? getTodayStr() : new Date().toISOString().slice(0,10);
+    const lastSync = localStorage.getItem('coach_prep_last_calendar_sync');
+    if (lastSync === today) return false;
+
+    const calEvents = await this.syncTodayCalendar(today);
+    if (!calEvents || calEvents.length === 0) {
+      localStorage.setItem('coach_prep_last_calendar_sync', today);
+      return false;
+    }
+
+    const students = this.getStudents();
+    const existingPlans = this.getPrepPlans(today);
+
+    calEvents.forEach(event => {
+      // Skip if plan already exists for this time + student
+      const exists = existingPlans.some(p =>
+        p.scheduledTime === event.time && p.studentName === event.studentName
+      );
+      if (exists) return;
+
+      // Try to match student by name
+      const student = students.find(s =>
+        s.name === event.studentName || s.name.includes(event.studentName) || event.studentName.includes(s.name)
+      );
+
+      // Generate exercise suggestions if student found and function available
+      let exercises = [];
+      if (student && typeof generateAISuggestions === 'function') {
+        try { exercises = generateAISuggestions(student.id); } catch(e) {}
+      }
+
+      const planId = `PP-${today.replace(/-/g,'')}-${event.time.replace(':','')}`;
+      const plan = {
+        id: planId,
+        studentId: student ? student.id : null,
+        studentName: event.studentName,
+        scheduledDate: today,
+        scheduledTime: event.time,
+        exercises: exercises,
+        status: 'draft',
+        notes: '',
+        autoGenerated: true,
+        createdAt: Date.now()
+      };
+      this.savePrepPlan(plan);
+    });
+
+    localStorage.setItem('coach_prep_last_calendar_sync', today);
+    return true;
+  },
 
   resetData() {
     localStorage.removeItem(this._key);
