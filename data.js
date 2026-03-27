@@ -2,6 +2,8 @@
 // Data Layer — Mock Data & LocalStorage
 // ============================================
 
+const GAS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw14eSL4EqXcBMENgmI3dIwdQPMqmn8dFbyRKjMEaRmQ9OQwuFsFBui-YQVoF0omzAxQw/exec';
+
 const AVATAR_COLORS = [
   'linear-gradient(135deg, #00e5a0, #00b4d8)',
   'linear-gradient(135deg, #6c5ce7, #a855f7)',

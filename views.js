@@ -33,7 +33,9 @@ function renderDashboard() {
     </div>
     <div class="section-header fade-in stagger-1">
       <div class="section-title">📋 今日課程</div>
-      <button class="btn-icon-sm" onclick="addToScheduleModal()" title="新增今日課程"
+      <button onclick="syncCalendarNow()" title="從 Google Calendar 同步"
+        style="background:none;border:1px solid var(--border);border-radius:50%;width:32px;height:32px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center" id="btn-cal-sync">🔄</button>
+      <button class="btn-icon-sm" onclick="addToScheduleModal()" title="手動新增"
         style="background:var(--accent);color:#000;border:none;border-radius:50%;width:32px;height:32px;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
     </div>
     <div class="session-list">

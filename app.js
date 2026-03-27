@@ -244,6 +244,17 @@ function saveScheduleItemModal() {
   navigate('dashboard');
 }
 
+function syncCalendarNow() {
+  const btn = document.getElementById('btn-cal-sync');
+  if (btn) { btn.style.animation = 'spin 1s linear infinite'; btn.style.pointerEvents = 'none'; }
+  showToast('🔄 同步行事曆中...');
+  try { fetch(GAS_SYNC_URL, { mode: 'no-cors' }); } catch(e) {}
+  setTimeout(() => {
+    navigate('dashboard');
+    showToast('✅ 同步完成');
+  }, 7000);
+}
+
 function deleteScheduleItemHandler(id) {
   DB.deleteScheduleItem(id);
   showToast('已移除');
