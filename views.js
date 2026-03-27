@@ -187,9 +187,9 @@ function renderSessionDetail(sessionId) {
 }
 
 function renderExercises() {
-  const categories = ['全部','暖身','NKT檢測','矯正動作','肌力訓練'];
-  const catIcons = { '暖身':'warmup', 'NKT檢測':'nkt', '矯正動作':'corrective', '肌力訓練':'strength' };
-  const catEmojis = { '暖身':'🏃', 'NKT檢測':'🔬', '矯正動作':'🔧', '肌力訓練':'🏋️' };
+  const categories = ['全部','NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
+  const catIcons = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢':'lower', '全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢':'🦵', '全身':'⚡' };
   const exercises = DB.getExercises();
 
   return `
