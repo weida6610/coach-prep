@@ -521,7 +521,16 @@ function closeActionSheet(e) {
 // PWA Registration
 // ============================================
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(err => console.log('SW:', err));
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // 每次 App 切回前景時，靜默檢查是否有新版本
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update();
+    });
+    // 新 SW 接管後自動 reload，不用手動清快取
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+  }).catch(err => console.log('SW:', err));
 }
 
 // ============================================
