@@ -346,8 +346,9 @@ function renderPrep(studentId) {
         <div style="width:54px"></div>
       </div>
       ${currentPrepPlan.map((ex, idx) => `
-        <div style="padding:8px 4px;border-bottom:1px solid var(--border)">
+        <div id="prep-ex-${idx}" draggable="true" ondragstart="prepDragStart(event,${idx})" ondragover="prepDragOver(event,${idx})" ondrop="prepDrop(event,${idx})" ondragend="prepDragEnd(event)" style="padding:8px 4px;border-bottom:1px solid var(--border);transition:opacity 0.15s,border-top 0.1s">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="cursor:grab;color:var(--text-muted);font-size:1rem;flex-shrink:0;touch-action:none" title="拖曳排序">⠿</span>
             <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:26px;height:26px;font-size:0.8rem;flex-shrink:0">${catEmojis[ex.category]||'💪'}</div>
             <div style="flex:1;min-width:0;font-size:0.88rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ex.name}</div>
             <button onclick="addSubSet(${idx})" title="新增不同重量" style="background:var(--accent);color:#000;border:none;border-radius:50%;width:22px;height:22px;font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0">+</button>
@@ -450,7 +451,10 @@ function renderSession(studentId) {
       <div class="active-exercise-header">
         <div>
           <div class="active-exercise-number">動作 ${state.currentExIdx + 1} / ${state.exercises.length}</div>
-          <div class="active-exercise-title">${ex.name}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="active-exercise-title">${ex.name}</div>
+            <button onclick="showEditSessionExercise()" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-size:0.72rem;padding:2px 7px;cursor:pointer;flex-shrink:0">✏️ 改</button>
+          </div>
           <div class="active-exercise-target">目標: ${uniqueSpecs}</div>
         </div>
         <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:48px;height:48px;font-size:1.4rem">${catEmojis[ex.category]||'💪'}</div>
@@ -663,3 +667,81 @@ function renderAddExercise() {
       <button class="btn-primary accent" onclick="saveExerciseForm()">➕ 新增動作</button>
     </div>`;
 }
+
+// ── Prep drag-to-reorder ──
+let _prepDragIdx = null;
+
+window.prepDragStart = function(e, idx) {
+  _prepDragIdx = idx;
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => { const el = document.getElementById(`prep-ex-${idx}`); if (el) el.style.opacity = '0.35'; }, 0);
+};
+
+window.prepDragOver = function(e, idx) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => el.style.borderTop = '');
+  if (idx !== _prepDragIdx) {
+    const el = document.getElementById(`prep-ex-${idx}`);
+    if (el) el.style.borderTop = '2px solid var(--accent)';
+  }
+};
+
+window.prepDragEnd = function(e) {
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => { el.style.borderTop = ''; el.style.opacity = ''; });
+  _prepDragIdx = null;
+};
+
+window.prepDrop = function(e, targetIdx) {
+  e.preventDefault();
+  if (_prepDragIdx === null || _prepDragIdx === targetIdx) { _prepDragIdx = null; return; }
+  const moved = currentPrepPlan.splice(_prepDragIdx, 1)[0];
+  currentPrepPlan.splice(targetIdx, 0, moved);
+  _prepDragIdx = null;
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => { el.style.borderTop = ''; el.style.opacity = ''; });
+  const curr = navigationStack[navigationStack.length - 1];
+  renderView(curr.view, curr.param);
+};
+
+// ── Session exercise edit ──
+window.showEditSessionExercise = function() {
+  if (!currentSessionState) return;
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  const curSets = ex.allSets.length;
+  const curReps = ex.allSets[0]?.reps || ex.reps || '10';
+  const curWeight = ex.allSets[0]?.weight || '';
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">✏️ ${ex.name}</div></div>
+    <div style="padding:0 16px 24px">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">組數</label>
+          <input type="number" id="ses-edit-sets" min="1" value="${curSets}" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
+        </div>
+        <div class="form-group">
+          <label class="form-label">次數</label>
+          <input type="text" id="ses-edit-reps" value="${curReps}" placeholder="10" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">重量</label>
+        <input type="text" id="ses-edit-weight" value="${curWeight}" placeholder="kg（留空代表徒手）" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
+      </div>
+      <button class="btn-primary accent" onclick="applyEditSessionExercise()">✅ 套用</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+};
+
+window.applyEditSessionExercise = function() {
+  const sets = Math.max(1, parseInt(document.getElementById('ses-edit-sets').value) || 1);
+  const reps = document.getElementById('ses-edit-reps').value.trim() || '10';
+  const weight = document.getElementById('ses-edit-weight').value.trim();
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  ex.allSets = Array.from({ length: sets }, () => ({ reps, weight }));
+  ex.completedSets = new Array(sets).fill(false);
+  ex.reps = reps;
+  ex.weight = weight || '-';
+  closeModal();
+  renderView('session', currentSessionState.studentId);
+};
