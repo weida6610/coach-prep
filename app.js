@@ -526,8 +526,9 @@ if ('serviceWorker' in navigator) {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') reg.update();
     });
-    // 新 SW 接管後自動 reload，不用手動清快取
+    // 新 SW 接管後自動 reload，上課中除外（避免遺失 session state）
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (currentSessionState) return;
       window.location.reload();
     });
   }).catch(err => console.log('SW:', err));
