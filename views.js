@@ -58,6 +58,7 @@ function renderDashboard() {
               <div class="session-info" onclick="navigate('prep', '${s.studentId}')" style="cursor:pointer;flex:1">
                 <div class="session-student-name">${student.name}</div>
                 <div class="session-type">${s.type} · 第${student.totalSessions + 1}堂</div>
+                ${s.preppedAt ? `<div style="font-size:0.65rem;color:var(--success);margin-top:2px">✅ ${s.preppedAt} 備課完成</div>` : ''}
               </div>
               <div class="session-status ${s.status}" style="margin-right:4px">
                 ${s.status === 'pending' ? '📝' : s.status === 'prepped' ? '✅' : '🏁'}

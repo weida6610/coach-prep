@@ -31,17 +31,46 @@ async function callGeminiAI(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
-  const recentSessions = sessions.slice(0, 3).reverse(); // Oldest to newest
+  const recentSessions = sessions.slice(0, 3).reverse(); // Oldest to newest (index 0=N-2, 1=N-1, 2=most recent)
   let historyText = '（無歷史紀錄）';
+
+  // Classify each session as Module A (上肢推+下肢拉) or B (上肢拉+下肢推)
+  function classifyModule(session) {
+    if (!session) return null;
+    let push = 0, pull = 0;
+    session.exercises.forEach(e => {
+      const cat = e.category || e.name || '';
+      if (cat.includes('推') || cat.includes('胸') || cat.includes('肩') || cat.includes('三頭')) push++;
+      if (cat.includes('拉') || cat.includes('背') || cat.includes('二頭') || cat.includes('划')) pull++;
+    });
+    if (push > pull) return 'A（上肢推＋下肢拉）';
+    if (pull > push) return 'B（上肢拉＋下肢推）';
+    return '不明確';
+  }
+
+  const sessionN2 = recentSessions[0] || null;
+  const sessionN1 = recentSessions[1] || null;
+  const modN2 = classifyModule(sessionN2);
+  const modN1 = classifyModule(sessionN1);
+  // N should match N-2; if N-2 is A, N is A; if N-2 is B, N is B
+  let targetModule = '不明確';
+  if (modN2 === 'A（上肢推＋下肢拉）') targetModule = 'A（上肢推＋下肢拉）';
+  else if (modN2 === 'B（上肢拉＋下肢推）') targetModule = 'B（上肢拉＋下肢推）';
+  else if (modN1 === 'A（上肢推＋下肢拉）') targetModule = 'B（上肢拉＋下肢推）';
+  else if (modN1 === 'B（上肢拉＋下肢推）') targetModule = 'A（上肢推＋下肢拉）';
+
   if (recentSessions.length > 0) {
-    historyText = recentSessions.map((s, i) => `
-### 歷史紀錄 ${i+1}: ${s.date} (${s.sessionType})
+    historyText = recentSessions.map((s, i) => {
+      const label = i === 0 ? 'N-2（上上次）' : i === 1 ? 'N-1（上次）' : 'N-0（最近）';
+      return `
+### ${label}: ${s.date} (${s.sessionType})
+- 模組分析：${classifyModule(s) || '不明確'}
 - 當日狀況：${s.conditionNotes || '無'}
 - 動作：
 ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.weight} | 品質:${e.quality || ''} | 備註:${e.notes || ''}`).join('\n')}
 - 教練筆記：${s.coachNotes || '無'}
-- 下堂建議：${s.nextSuggestion || '無'}
-`).join('\n');
+- 下堂建議：${s.nextSuggestion || '無'}`;
+    }).join('\n');
   }
 
   const libText = exerciseLib.map(e => `[${e.category}] ${e.name}`).join(', ');
@@ -57,20 +86,24 @@ ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.wei
 - NKT發現：${student.nktFindings || '無'}
 - 目前階段：${student.currentPhase}
 
-## 過去上課紀錄（參考）
+## 過去上課紀錄（由舊到新）
 ${historyText}
+
+## 課表模組輪替規則（重要）
+- **模組 A**：上肢推（胸大肌、三角肌、三頭肌）＋ 下肢拉（臀大肌、腿後側）
+- **模組 B**：上肢拉（背闊肌、菱形肌、二頭肌）＋ 下肢推（股四頭肌、臀肌）
+- 規律：N-2 ≈ N（同模組），N-1 與 N 互為相反
+- 分析結果：N-2 = ${modN2 || '無資料'}｜N-1 = ${modN1 || '無資料'}
+- **本次（N）目標模組 = ${targetModule}**（請依此安排主訓練動作）
 
 ## 動作庫參考（可使用庫內動作也可自由創建）
 ${libText}
 
 ## 你的任務
-請提出 **剛好 3 個** 適合該學員目標的「創意補充動作」，可以是：
-- 動作庫中尚未用過的新挑戰
-- 針對目前訓練弱點的補強
-- 有趣、激勵性的進階嘗試
-要求：
-1. 必須符合學員訓練目標與身體狀況，有傷處請迴避
-2. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
+請提出 **剛好 3 個** 符合本次模組（${targetModule}）且適合該學員目標的「創意補充動作」：
+1. 必須符合學員訓練目標、身體狀況，有傷處請迴避
+2. 動作必須呼應本次模組（${targetModule}）的主要肌群
+3. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
@@ -181,6 +214,11 @@ function showApiKeyModal() {
         <input type="password" id="api-key-input" value="${currentKey}" placeholder="API Key">
       </div>
       <p id="api-link-text" style="font-size:0.75rem;color:var(--text-secondary);line-height:1.5;margin-bottom:16px"></p>
+      <div class="form-group">
+        <label class="form-label">簽到 GAS URL（選填）</label>
+        <input type="url" id="checkin-gas-url-input" value="${localStorage.getItem('checkin_gas_url') || ''}" placeholder="https://script.google.com/..." style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:0.85rem;width:100%;box-sizing:border-box">
+        <p style="font-size:0.72rem;color:var(--text-muted);margin-top:4px">結束課程後顯示 QR 碼供學員掃描簽到</p>
+      </div>
       <button class="btn-primary accent" onclick="saveAiSettings()">💾 儲存</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
@@ -203,11 +241,13 @@ window.updateModalKeyInput = function(provider) {
 window.saveAiSettings = function() {
   const provider = document.getElementById('ai-provider-select').value;
   const key = document.getElementById('api-key-input').value.trim();
+  const gasUrl = document.getElementById('checkin-gas-url-input').value.trim();
   localStorage.setItem('ai_provider', provider);
   if (provider === 'openai') localStorage.setItem('openai_api_key', key);
   else localStorage.setItem('gemini_api_key', key);
+  if (gasUrl) localStorage.setItem('checkin_gas_url', gasUrl);
   closeModal();
-  showToast('✅ AI 設定已儲存');
+  showToast('✅ 設定已儲存');
 };
 
 function addAiExerciseToLibrary(idx) {
@@ -638,6 +678,11 @@ function renderSession(studentId) {
         <textarea id="overall-notes" placeholder="整體觀察、下次重點..." oninput="currentSessionState.overallNotes=this.value">${state.overallNotes}</textarea>
       </div>
     </div>` : ''}
+    ${state.currentExIdx < state.exercises.length - 1 ? `
+    <div style="position:fixed;bottom:92px;right:14px;background:rgba(18,18,31,0.96);border:1px solid var(--border-light);border-radius:12px;padding:7px 12px;max-width:160px;backdrop-filter:blur(10px);z-index:20;box-shadow:var(--shadow)">
+      <div style="font-size:0.6rem;color:var(--text-muted);letter-spacing:0.06em;margin-bottom:2px">NEXT ▶</div>
+      <div style="font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--accent)">${state.exercises[state.currentExIdx + 1].name}</div>
+    </div>` : ''}
     <div style="height:80px"></div>
     <div class="exercise-nav">
       <button class="btn-primary secondary" onclick="showSessionAddExercise()" style="flex:0 0 44px;padding:0;font-size:1.3rem;display:flex;align-items:center;justify-content:center" title="臨時新增動作">＋</button>
@@ -678,6 +723,17 @@ function savePrepPlan(studentId) {
   const notes = document.getElementById('prep-notes')?.value || '';
   currentPrepPlan._prepNotes = notes;
   localStorage.setItem(`prep_${studentId}`, JSON.stringify({ exercises: currentPrepPlan.map(e => ({...e})), notes }));
+
+  // 在今日排程項目上記錄備課時間戳
+  const todayStr = getTodayStr();
+  const schedule = DB.getSchedule();
+  const item = schedule.find(s => s.studentId === studentId && s.date === todayStr);
+  if (item) {
+    const now = new Date();
+    item.preppedAt = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+    DB.saveScheduleItem(item);
+  }
+
   showToast('✅ 備課已儲存');
 }
 
@@ -711,12 +767,15 @@ function addLibExerciseToSession(exerciseId) {
   const ex = DB.getExercises().find(e => e.id === exerciseId);
   if (!ex || !currentSessionState) return;
   const allSets = Array.from({ length: ex.defaultSets }, () => ({ reps: ex.defaultReps, weight: '' }));
-  currentSessionState.exercises.push({
+  const newEx = {
     exerciseId: ex.id, name: ex.name, category: ex.category,
     sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', subSets: [],
     allSets, completedSets: new Array(allSets.length).fill(false),
     quality: '', notes: '', actualWeight: ''
-  });
+  };
+  // 插入當前動作的下一位，不是 push 到最後
+  const insertAt = currentSessionState.currentExIdx + 1;
+  currentSessionState.exercises.splice(insertAt, 0, newEx);
   closeModal();
   showToast(`✅ 已加入 ${ex.name}`);
   renderView('session', currentSessionState.studentId);
@@ -899,45 +958,64 @@ function _onPrepTouchEnd(e) {
   _tdIdx = null;
 }
 
-// ── Session exercise edit ──
-window.showEditSessionExercise = function() {
-  if (!currentSessionState) return;
-  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  const curSets = ex.allSets.length;
-  const curReps = ex.allSets[0]?.reps || ex.reps || '10';
-  const curWeight = ex.allSets[0]?.weight || '';
+// ── Session exercise edit (per-set) ──
+let _editSets = [];
+
+function _renderEditSetsModal(exName) {
+  const inputStyle = 'background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:7px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;width:100%;box-sizing:border-box';
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-header"><div class="modal-title">✏️ ${ex.name}</div></div>
-    <div style="padding:0 16px 24px">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">組數</label>
-          <input type="number" id="ses-edit-sets" min="1" value="${curSets}" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
-        </div>
-        <div class="form-group">
-          <label class="form-label">次數</label>
-          <input type="text" id="ses-edit-reps" value="${curReps}" placeholder="10" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
-        </div>
+    <div class="modal-header"><div class="modal-title">✏️ ${exName}</div></div>
+    <div style="padding:0 16px 8px">
+      <div style="display:grid;grid-template-columns:36px 1fr 1fr;gap:6px;margin-bottom:6px">
+        <div></div>
+        <div style="font-size:0.68rem;color:var(--text-muted);text-align:center">重量</div>
+        <div style="font-size:0.68rem;color:var(--text-muted);text-align:center">次數</div>
       </div>
-      <div class="form-group">
-        <label class="form-label">重量</label>
-        <input type="text" id="ses-edit-weight" value="${curWeight}" placeholder="kg（留空代表徒手）" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:1rem;width:100%;box-sizing:border-box;text-align:center">
+      ${_editSets.map((s, i) => `
+        <div style="display:grid;grid-template-columns:36px 1fr 1fr;gap:6px;margin-bottom:6px;align-items:center">
+          <div style="font-size:0.72rem;color:var(--text-muted);text-align:center">第${i+1}組</div>
+          <input type="text" value="${s.weight||''}" placeholder="kg" oninput="_editSets[${i}].weight=this.value" style="${inputStyle}">
+          <input type="text" value="${s.reps||''}" placeholder="次" oninput="_editSets[${i}].reps=this.value" style="${inputStyle}">
+        </div>`).join('')}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button onclick="_addEditSet()" style="flex:1;background:none;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);padding:8px;cursor:pointer;font-size:0.8rem">＋ 新增一組</button>
+        <button onclick="_removeLastEditSet()" style="flex:0 0 44px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);padding:8px;cursor:pointer" ${_editSets.length <= 1 ? 'disabled style="opacity:0.3"' : ''}>－</button>
       </div>
+    </div>
+    <div style="padding:8px 16px 24px">
       <button class="btn-primary accent" onclick="applyEditSessionExercise()">✅ 套用</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
+}
+
+window.showEditSessionExercise = function() {
+  if (!currentSessionState) return;
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  _editSets = ex.allSets.map(s => ({ weight: s.weight || '', reps: s.reps || ex.reps || '10' }));
+  _renderEditSetsModal(ex.name);
+};
+
+window._addEditSet = function() {
+  const last = _editSets[_editSets.length - 1] || { weight: '', reps: '10' };
+  _editSets.push({ weight: last.weight, reps: last.reps });
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  _renderEditSetsModal(ex.name);
+};
+
+window._removeLastEditSet = function() {
+  if (_editSets.length <= 1) return;
+  _editSets.pop();
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  _renderEditSetsModal(ex.name);
 };
 
 window.applyEditSessionExercise = function() {
-  const sets = Math.max(1, parseInt(document.getElementById('ses-edit-sets').value) || 1);
-  const reps = document.getElementById('ses-edit-reps').value.trim() || '10';
-  const weight = document.getElementById('ses-edit-weight').value.trim();
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  ex.allSets = Array.from({ length: sets }, () => ({ reps, weight }));
-  ex.completedSets = new Array(sets).fill(false);
-  ex.reps = reps;
-  ex.weight = weight || '-';
+  ex.allSets = _editSets.map(s => ({ weight: s.weight, reps: s.reps || ex.reps }));
+  ex.completedSets = new Array(ex.allSets.length).fill(false);
+  ex.reps = ex.allSets[0]?.reps || ex.reps;
+  ex.weight = ex.allSets[0]?.weight || '-';
   closeModal();
   renderView('session', currentSessionState.studentId);
 };

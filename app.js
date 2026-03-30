@@ -543,15 +543,61 @@ function saveSession() {
     nextSuggestion: ''
   };
 
+  const savedStudentId = state.studentId;
   DB.saveSession(session);
   localStorage.removeItem(`prep_${state.studentId}`);
   currentSessionState = null;
   currentPrepPlan = [];
   if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
   showToast('✅ 課程紀錄已儲存！');
+
+  // 顯示簽到 QR Code，點按鈕後才回首頁
+  showCheckInQrModal(savedStudentId);
+}
+
+function showCheckInQrModal(studentId) {
+  const student = DB.getStudent(studentId);
+  const gasUrl = localStorage.getItem('checkin_gas_url') || '';
+  const now = new Date();
+  const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  let qrHtml = '';
+  if (gasUrl) {
+    const checkInUrl = `${gasUrl}?id=${encodeURIComponent(student?.id || '')}&name=${encodeURIComponent(student?.name || '')}&date=${getTodayStr()}&time=${encodeURIComponent(timeStr)}`;
+    const qrSrc = `https://chart.googleapis.com/chart?chs=220x220&cht=qr&chl=${encodeURIComponent(checkInUrl)}&choe=UTF-8`;
+    qrHtml = `
+      <div style="text-align:center;padding:12px 0 4px">
+        <img src="${qrSrc}" style="width:200px;height:200px;border-radius:12px;border:2px solid var(--border-light)" alt="簽到 QR Code">
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">請學員掃描完成簽到</div>
+      </div>`;
+  } else {
+    qrHtml = `
+      <div style="text-align:center;padding:16px;background:var(--bg-card);border-radius:12px;margin:8px 0">
+        <div style="font-size:0.85rem;color:var(--text-muted)">尚未設定簽到 GAS URL</div>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">可至首頁右上角 🔑 設定</div>
+      </div>`;
+  }
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">課程結束 🎉</div></div>
+    <div style="padding:0 16px 24px">
+      <div style="text-align:center;margin-bottom:8px">
+        <div style="font-size:1.1rem;font-weight:700">${student?.name || ''}</div>
+        <div style="font-size:0.8rem;color:var(--text-muted)">${getTodayStr()} ${timeStr}</div>
+      </div>
+      ${qrHtml}
+      <button class="btn-primary accent" onclick="finishSession()" style="margin-top:12px">✅ 簽到完成 · 回首頁</button>
+      <button class="btn-primary secondary" onclick="finishSession()" style="margin-top:8px">略過 · 回首頁</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+window.finishSession = function() {
+  document.getElementById('modal-overlay').classList.remove('active');
   navigationStack = [];
   navigate('dashboard');
-}
+};
 
 function determineSessionType(exercises) {
   const cats = exercises.map(e => e.category);
