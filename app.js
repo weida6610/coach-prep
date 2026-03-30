@@ -103,6 +103,14 @@ function renderView(view, param) {
       title.textContent = '備課';
       currentSessionState = null;
       content.innerHTML = renderPrep(param);
+      _initPrepTouchDrag();
+      break;
+
+    case 'body-check':
+      backBtn.style.display = 'flex';
+      title.textContent = '上課前記錄';
+      nav.style.display = 'none';
+      content.innerHTML = renderBodyCheck(param);
       break;
 
     case 'session':
@@ -137,6 +145,12 @@ function renderView(view, param) {
       backBtn.style.display = 'flex';
       title.textContent = '新增動作';
       content.innerHTML = renderAddExercise();
+      break;
+
+    case 'edit-exercise':
+      backBtn.style.display = 'flex';
+      title.textContent = '編輯動作';
+      content.innerHTML = renderAddExercise(param);
       break;
 
     case 'history':
@@ -291,19 +305,21 @@ function selectExerciseCategory(category) {
   });
 }
 
-function saveExerciseForm() {
+function saveExerciseForm(existingId) {
   const name = document.getElementById('fe-name').value.trim();
   if (!name) { showToast('❌ 請輸入動作名稱'); return; }
 
-  DB.saveExercise({
+  const data = {
     name,
     category: document.getElementById('fe-category').value,
     target: document.getElementById('fe-target').value.trim(),
     defaultSets: parseInt(document.getElementById('fe-sets').value) || 3,
     defaultReps: document.getElementById('fe-reps').value.trim() || '10',
     cues: document.getElementById('fe-cues').value.trim()
-  });
-  showToast('✅ 動作已新增');
+  };
+  if (existingId) data.id = existingId;
+  DB.saveExercise(data);
+  showToast(existingId ? '✅ 動作已更新' : '✅ 動作已新增');
   goBack();
 }
 
@@ -333,14 +349,19 @@ function showExercisePicker(studentId) {
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-header"><div class="modal-title">選擇動作</div></div>
+    <div class="modal-header"><div class="modal-title">新增動作至課表</div></div>
     <div style="padding:0 16px 8px">
       <div class="search-box">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         <input type="text" placeholder="搜尋動作..." oninput="filterModalExercises(this.value)">
       </div>
     </div>
-    <div style="padding:0 16px 24px;max-height:50vh;overflow-y:auto" id="modal-exercise-list">
+    <div style="padding:0 16px 6px">
+      <button onclick="showInlineNewExercise('${studentId}')" style="width:100%;background:rgba(0,229,160,0.1);border:1px dashed var(--accent);border-radius:10px;color:var(--accent);padding:10px;font-size:0.85rem;cursor:pointer;font-weight:600">
+        ＋ 新增自訂動作並加入資料庫
+      </button>
+    </div>
+    <div style="padding:0 16px 24px;max-height:45vh;overflow-y:auto" id="modal-exercise-list">
       ${exercises.map(e => `
         <div class="exercise-lib-card" data-name="${e.name}" onclick="addExerciseToPrep('${e.id}','${studentId}')">
           <div class="exercise-icon ${catIcons[e.category] || 'full'}">${catEmojis[e.category] || '💪'}</div>
@@ -352,6 +373,48 @@ function showExercisePicker(studentId) {
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
 }
+
+function showInlineNewExercise(studentId) {
+  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">新增自訂動作</div></div>
+    <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
+      <input type="text" id="ni-name" placeholder="動作名稱 *" class="form-input">
+      <select id="ni-category" class="form-input">
+        ${cats.map((c,i) => `<option value="${c}" ${i===4?'selected':''}>${c}</option>`).join('')}
+      </select>
+      <input type="text" id="ni-target" placeholder="目標肌群" class="form-input">
+      <div style="display:flex;gap:8px">
+        <input type="number" id="ni-sets" value="3" placeholder="組數" class="form-input" style="flex:1;text-align:center">
+        <input type="text" id="ni-reps" value="10" placeholder="次數" class="form-input" style="flex:1;text-align:center">
+      </div>
+      <textarea id="ni-cues" placeholder="動作提示（選填）" class="form-input" style="min-height:60px"></textarea>
+      <button class="btn-primary accent" onclick="saveInlineNewExercise('${studentId}')">➕ 新增並加入課表</button>
+      <button class="btn-primary secondary" onclick="showExercisePicker('${studentId}')">← 返回動作庫</button>
+    </div>`;
+}
+
+window.saveInlineNewExercise = function(studentId) {
+  const name = document.getElementById('ni-name').value.trim();
+  if (!name) { showToast('❌ 請輸入動作名稱'); return; }
+  const ex = DB.saveExercise({
+    name,
+    category: document.getElementById('ni-category').value,
+    target: document.getElementById('ni-target').value.trim(),
+    defaultSets: parseInt(document.getElementById('ni-sets').value) || 3,
+    defaultReps: document.getElementById('ni-reps').value.trim() || '10',
+    cues: document.getElementById('ni-cues').value.trim()
+  });
+  currentPrepPlan.push({
+    exerciseId: ex.id, name: ex.name, category: ex.category,
+    sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', cues: ex.cues || ''
+  });
+  closeModal();
+  showToast(`✅ 「${ex.name}」已加入資料庫與課表`);
+  navigationStack.pop();
+  navigate('prep', studentId);
+};
 
 function filterModalExercises(query) {
   document.querySelectorAll('#modal-exercise-list .exercise-lib-card').forEach(card => {
@@ -381,7 +444,7 @@ function startSession(studentId) {
   const notes = document.getElementById('prep-notes')?.value || '';
   if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
   currentSessionState = null;
-  navigate('session', studentId);
+  navigate('body-check', studentId);
 }
 
 function startQuickSession() {

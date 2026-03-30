@@ -48,7 +48,7 @@ ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.wei
 
   // 強化版 Prompt：要求 AI 模仿前三次課表邏輯並運用學員專屬動作庫
   const prompt = `你是一位跟隨這位教練多年的 AI 助教。
-你的任務是：**學習這位教練在過去幾堂課的「排課邏輯、動作挑選習慣與漸進式超負荷規則」，並自動產出完美銜接的「下一堂課」課表。**
+你的任務是：根據學員的訓練目標與過去紀錄，**自由發揮提出 3 個最適合這位學員的創意訓練動作**，加在課表最下方。
 
 ## 學員基本資料
 - 姓名：${student.name}
@@ -57,24 +57,26 @@ ${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.wei
 - NKT發現：${student.nktFindings || '無'}
 - 目前階段：${student.currentPhase}
 
-## 過去上課紀錄 (由舊到新排列，請分析動作連貫性及重量成長)
+## 過去上課紀錄（參考）
 ${historyText}
 
-## 動作庫參考 (請優先從以下清單挑選，維持教練的命名習慣)
+## 動作庫參考（可使用庫內動作也可自由創建）
 ${libText}
 
 ## 你的任務
-請輸出下一堂課的完整課表（包含暖身、矯正、主訓練），要求：
-1. 嚴格模仿教練在「過去紀錄」裡展現的課程結構與動作偏好。
-2. 若「下堂建議」中有提到加重或更換動作，請務必落實。
-3. 針對表現「優秀」的肌力動作，請自動計算並增加一點重量或次數。
-4. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列：
+請提出 **剛好 3 個** 適合該學員目標的「創意補充動作」，可以是：
+- 動作庫中尚未用過的新挑戰
+- 針對目前訓練弱點的補強
+- 有趣、激勵性的進階嘗試
+要求：
+1. 必須符合學員訓練目標與身體狀況，有傷處請迴避
+2. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
     "name": "動作名稱",
-    "category": "暖身|NKT檢測|矯正動作|肌力訓練",
-    "target": "目標",
+    "category": "暖身|NKT評估|核心控制|上肢推|上肢拉|下肢|全身",
+    "target": "目標肌群",
     "sets": 3,
     "reps": "12",
     "weight": "15kg",
@@ -131,9 +133,10 @@ ${libText}
     
     const exercises = JSON.parse(jsonStr);
     geminiLoading = false;
-    
-    // Replace current plan with Gemini's plan
-    currentPrepPlan = exercises.map(ex => ({
+
+    // Remove previous free-style items, keep manual ones
+    const baseItems = currentPrepPlan.filter(ex => !ex.isFreeStyle);
+    const freeItems = exercises.slice(0, 3).map(ex => ({
       exerciseId: 'AI-' + Math.random().toString(36).substr(2, 6),
       name: ex.name,
       category: ex.category,
@@ -142,14 +145,15 @@ ${libText}
       reps: String(ex.reps || '10'),
       weight: ex.weight || '-',
       cues: ex.cues || '',
-      isAiGenerated: true
+      isFreeStyle: true
     }));
+    currentPrepPlan = [...baseItems, ...freeItems];
     currentPrepPlan.studentId = studentId;
-    
+
     // Re-render prep view
     navigationStack.pop();
     navigate('prep', studentId);
-    showToast('✅ AI 課表已產生！');
+    showToast('✅ AI 自由發揮項目已加入課表底部！');
     
   } catch (err) {
     geminiLoading = false;
@@ -291,6 +295,171 @@ function generateAISuggestions(studentId) {
   return plan;
 }
 
+// ── Prep exercise row helpers ──
+function renderPrepExerciseRow(ex, idx, catIcons, catEmojis) {
+  return `
+    <div id="prep-ex-${idx}" draggable="true"
+      ondragstart="prepDragStart(event,${idx})" ondragover="prepDragOver(event,${idx})"
+      ondrop="prepDrop(event,${idx})" ondragend="prepDragEnd(event)"
+      style="padding:8px 4px;border-bottom:1px solid var(--border);transition:opacity 0.15s,border-top 0.1s">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span class="prep-drag-handle" data-idx="${idx}"
+          style="cursor:grab;color:var(--text-muted);font-size:1rem;flex-shrink:0;touch-action:none;padding:4px 2px" title="拖曳排序">⠿</span>
+        <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:26px;height:26px;font-size:0.8rem;flex-shrink:0">${catEmojis[ex.category]||'💪'}</div>
+        <div style="flex:1;min-width:0;font-size:0.88rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ex.name}</div>
+        <button onclick="addSubSet(${idx})" title="新增不同重量" style="background:var(--accent);color:#000;border:none;border-radius:50%;width:22px;height:22px;font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0">+</button>
+        <button onclick="removePrepExercise(${idx})" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;flex-shrink:0;padding:0 2px;width:22px;height:22px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;padding-left:32px">
+        <input value="${ex.weight!=='-'?ex.weight:''}" placeholder="重量" oninput="updatePrepExercise(${idx},'weight',this.value)" style="width:66px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+        <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+        <input value="${ex.reps}" placeholder="次" oninput="updatePrepExercise(${idx},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+        <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+        <input type="number" min="1" value="${ex.sets}" placeholder="組" oninput="updatePrepExercise(${idx},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+      </div>
+      ${(ex.subSets||[]).map((ss,si) => `
+      <div style="display:flex;align-items:center;gap:4px;padding-left:32px;margin-top:4px">
+        <span style="color:var(--accent);font-size:0.7rem;width:10px;flex-shrink:0">↳</span>
+        <input value="${ss.weight||''}" placeholder="重量" oninput="updateSubSet(${idx},${si},'weight',this.value)" style="width:60px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+        <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+        <input value="${ss.reps||''}" placeholder="次" oninput="updateSubSet(${idx},${si},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+        <span style="color:var(--text-muted);font-size:0.75rem">×</span>
+        <input type="number" min="1" value="${ss.sets||1}" placeholder="組" oninput="updateSubSet(${idx},${si},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
+        <button onclick="removeSubSet(${idx},${si})" style="background:none;border:none;color:var(--text-muted);font-size:0.9rem;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
+      </div>`).join('')}
+    </div>`;
+}
+
+function renderPrepFreeItem(ex, idx, catIcons, catEmojis) {
+  return `
+    <div style="padding:8px 4px;border-bottom:1px solid rgba(108,92,231,0.2)">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:26px;height:26px;font-size:0.8rem;flex-shrink:0">${catEmojis[ex.category]||'💪'}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:0.88rem;font-weight:500">${ex.name}</div>
+          ${ex.cues ? `<div style="font-size:0.72rem;color:var(--text-muted)">${ex.cues}</div>` : ''}
+        </div>
+        <button onclick="addAiExerciseToLibrary(${idx})" id="save-lib-${idx}"
+          style="background:none;border:1px solid var(--accent-secondary);border-radius:var(--radius-full);color:var(--accent-secondary);font-size:0.68rem;padding:3px 8px;cursor:pointer;flex-shrink:0;white-space:nowrap">加入資料庫</button>
+        <button onclick="adoptFreeItem(${idx})" title="加入課表"
+          style="background:var(--accent);color:#000;border:none;border-radius:50%;width:22px;height:22px;font-size:0.85rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0">✓</button>
+        <button onclick="removePrepExercise(${idx})" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;flex-shrink:0;padding:0 2px;width:22px;height:22px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-secondary);padding-left:32px">
+        ${ex.target ? `目標：${ex.target}　` : ''}${ex.sets}組 × ${ex.reps}　${ex.weight && ex.weight !== '-' ? ex.weight : ''}
+      </div>
+    </div>`;
+}
+
+// ── Body Check ──
+let _lastBodyData = null;
+
+function renderBodyCheck(studentId) {
+  const student = DB.getStudent(studentId);
+  if (!student) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
+
+  const saved = localStorage.getItem(`body_data_${studentId}`);
+  const history = saved ? JSON.parse(saved) : [];
+  _lastBodyData = history.length > 0 ? history[history.length - 1] : null;
+  const last = _lastBodyData;
+
+  return `
+    <div class="prep-student-bar fade-in">
+      <div class="student-avatar" style="background:${student.avatarColor}">${student.name.charAt(0)}</div>
+      <div>
+        <div class="student-name">${student.name}</div>
+        <div class="student-meta">上課前身體數據記錄</div>
+      </div>
+    </div>
+    ${last ? `
+    <div class="prep-section fade-in stagger-1">
+      <div class="prep-section-title">📊 上次記錄 <span style="font-size:0.7rem;color:var(--text-muted)">${last.date}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+        ${[['體重','kg',last.weight],['肌肉量','kg',last.muscle],['體脂率','%',last.bodyFat]].map(([label,unit,val]) => `
+          <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center">
+            <div style="font-size:0.68rem;color:var(--text-muted)">${label}</div>
+            <div style="font-size:1.3rem;font-weight:700">${val || '--'}</div>
+            <div style="font-size:0.68rem;color:var(--text-muted)">${unit}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+    <div class="prep-section fade-in stagger-2">
+      <div class="prep-section-title">📝 今日數據（選填）</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
+        <div>
+          <label style="font-size:0.72rem;color:var(--text-muted);display:block;text-align:center;margin-bottom:4px">體重 kg</label>
+          <input type="number" step="0.1" id="bc-weight" placeholder="--" oninput="updateBodyCheckDiff()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 4px;color:var(--text-primary);font-size:1rem;text-align:center;box-sizing:border-box">
+          <div id="bc-weight-diff" style="text-align:center;min-height:20px;margin-top:4px;font-size:0.82rem;font-weight:700"></div>
+        </div>
+        <div>
+          <label style="font-size:0.72rem;color:var(--text-muted);display:block;text-align:center;margin-bottom:4px">肌肉量 kg</label>
+          <input type="number" step="0.1" id="bc-muscle" placeholder="--" oninput="updateBodyCheckDiff()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 4px;color:var(--text-primary);font-size:1rem;text-align:center;box-sizing:border-box">
+          <div id="bc-muscle-diff" style="text-align:center;min-height:20px;margin-top:4px;font-size:0.82rem;font-weight:700"></div>
+        </div>
+        <div>
+          <label style="font-size:0.72rem;color:var(--text-muted);display:block;text-align:center;margin-bottom:4px">體脂率 %</label>
+          <input type="number" step="0.1" id="bc-fat" placeholder="--" oninput="updateBodyCheckDiff()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 4px;color:var(--text-primary);font-size:1rem;text-align:center;box-sizing:border-box">
+          <div id="bc-fat-diff" style="text-align:center;min-height:20px;margin-top:4px;font-size:0.82rem;font-weight:700"></div>
+        </div>
+      </div>
+      <p style="font-size:0.68rem;color:var(--text-muted);text-align:center;margin-top:10px">體重/體脂 ▼綠色=下降佳　肌肉量 ▲綠色=上升佳</p>
+    </div>
+    <div style="height:80px"></div>
+    <div class="floating-actions">
+      <button class="btn-primary secondary" onclick="goBack()" style="flex:0.4">← 備課</button>
+      <button class="btn-primary accent" onclick="saveBodyCheckAndStart('${studentId}')">▶ 開始上課</button>
+    </div>`;
+}
+
+window.updateBodyCheckDiff = function() {
+  const last = _lastBodyData;
+  if (!last) return;
+  const fields = [
+    { inputId:'bc-weight',  diffId:'bc-weight-diff',  lastVal: last.weight,   upGood: false },
+    { inputId:'bc-muscle',  diffId:'bc-muscle-diff',  lastVal: last.muscle,   upGood: true  },
+    { inputId:'bc-fat',     diffId:'bc-fat-diff',     lastVal: last.bodyFat,  upGood: false },
+  ];
+  fields.forEach(({ inputId, diffId, lastVal, upGood }) => {
+    const input = document.getElementById(inputId);
+    const diffEl = document.getElementById(diffId);
+    if (!input || !diffEl) return;
+    if (input.value === '' || lastVal === null || lastVal === undefined) { diffEl.innerHTML = ''; return; }
+    const diff = parseFloat(input.value) - parseFloat(lastVal);
+    if (isNaN(diff)) { diffEl.innerHTML = ''; return; }
+    const sign = diff >= 0 ? '+' : '';
+    const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '─';
+    const isGood = (diff > 0 && upGood) || (diff < 0 && !upGood);
+    const color = diff === 0 ? 'var(--text-muted)' : isGood ? 'var(--success)' : 'var(--danger)';
+    diffEl.innerHTML = `<span style="color:${color}">${arrow} ${sign}${Math.abs(diff).toFixed(1)}</span>`;
+  });
+};
+
+window.saveBodyCheckAndStart = function(studentId) {
+  const weight = document.getElementById('bc-weight')?.value;
+  const muscle = document.getElementById('bc-muscle')?.value;
+  const fat    = document.getElementById('bc-fat')?.value;
+  if (weight || muscle || fat) {
+    const saved = localStorage.getItem(`body_data_${studentId}`);
+    const history = saved ? JSON.parse(saved) : [];
+    history.push({ date: getTodayStr(), weight: weight || null, muscle: muscle || null, bodyFat: fat || null });
+    if (history.length > 20) history.splice(0, history.length - 20);
+    localStorage.setItem(`body_data_${studentId}`, JSON.stringify(history));
+  }
+  currentSessionState = null;
+  navigate('session', studentId);
+};
+
+window.adoptFreeItem = function(idx) {
+  if (!currentPrepPlan[idx]) return;
+  currentPrepPlan[idx].isFreeStyle = false;
+  const curr = navigationStack[navigationStack.length - 1];
+  renderView(curr.view, curr.param);
+  showToast('✅ 已加入正式課表');
+};
+
 function renderPrep(studentId) {
   const student = DB.getStudent(studentId);
   if (!student) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
@@ -307,7 +476,7 @@ function renderPrep(studentId) {
         currentPrepPlan._prepNotes = data.notes || '';
       } catch(e) { currentPrepPlan = generateAISuggestions(studentId); }
     } else {
-      currentPrepPlan = generateAISuggestions(studentId);
+      currentPrepPlan = [];
     }
     currentPrepPlan.studentId = studentId;
   }
@@ -345,34 +514,12 @@ function renderPrep(studentId) {
         <div style="width:38px;text-align:center">組數</div>
         <div style="width:54px"></div>
       </div>
-      ${currentPrepPlan.map((ex, idx) => `
-        <div id="prep-ex-${idx}" draggable="true" ondragstart="prepDragStart(event,${idx})" ondragover="prepDragOver(event,${idx})" ondrop="prepDrop(event,${idx})" ondragend="prepDragEnd(event)" style="padding:8px 4px;border-bottom:1px solid var(--border);transition:opacity 0.15s,border-top 0.1s">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            <span style="cursor:grab;color:var(--text-muted);font-size:1rem;flex-shrink:0;touch-action:none" title="拖曳排序">⠿</span>
-            <div class="exercise-icon ${catIcons[ex.category]||'full'}" style="width:26px;height:26px;font-size:0.8rem;flex-shrink:0">${catEmojis[ex.category]||'💪'}</div>
-            <div style="flex:1;min-width:0;font-size:0.88rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ex.name}</div>
-            <button onclick="addSubSet(${idx})" title="新增不同重量" style="background:var(--accent);color:#000;border:none;border-radius:50%;width:22px;height:22px;font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0">+</button>
-            <button onclick="removePrepExercise(${idx})" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;flex-shrink:0;padding:0 2px;width:22px;height:22px;display:flex;align-items:center;justify-content:center">✕</button>
-          </div>
-          <div style="display:flex;align-items:center;gap:4px;padding-left:32px">
-            <input value="${ex.weight!=='-'?ex.weight:''}" placeholder="重量" oninput="updatePrepExercise(${idx},'weight',this.value)" style="width:66px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
-            <input value="${ex.reps}" placeholder="次" oninput="updatePrepExercise(${idx},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
-            <input type="number" min="1" value="${ex.sets}" placeholder="組" oninput="updatePrepExercise(${idx},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-          </div>
-          ${(ex.subSets||[]).map((ss,si) => `
-          <div style="display:flex;align-items:center;gap:4px;padding-left:32px;margin-top:4px">
-            <span style="color:var(--accent);font-size:0.7rem;width:10px;flex-shrink:0">↳</span>
-            <input value="${ss.weight||''}" placeholder="重量" oninput="updateSubSet(${idx},${si},'weight',this.value)" style="width:60px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
-            <input value="${ss.reps||''}" placeholder="次" oninput="updateSubSet(${idx},${si},'reps',this.value)" style="width:46px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-            <span style="color:var(--text-muted);font-size:0.75rem">×</span>
-            <input type="number" min="1" value="${ss.sets||1}" placeholder="組" oninput="updateSubSet(${idx},${si},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
-            <button onclick="removeSubSet(${idx},${si})" style="background:none;border:none;color:var(--text-muted);font-size:0.9rem;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
-          </div>`).join('')}
-        </div>
-      `).join('')}
+      ${currentPrepPlan.filter(ex => !ex.isFreeStyle).map((ex, idx) => renderPrepExerciseRow(ex, idx, catIcons, catEmojis)).join('')}
+      ${currentPrepPlan.filter(ex => ex.isFreeStyle).length > 0 ? `
+      <div style="margin-top:16px;padding:10px 8px 6px;border-radius:var(--radius-md);background:linear-gradient(135deg,rgba(108,92,231,0.12),rgba(0,229,160,0.08));border:1px solid rgba(108,92,231,0.3)">
+        <div style="font-size:0.72rem;color:var(--accent-secondary);font-weight:700;letter-spacing:0.05em;margin-bottom:8px">🧠 AI 自由發揮建議</div>
+        ${currentPrepPlan.map((ex, idx) => ex.isFreeStyle ? renderPrepFreeItem(ex, idx, catIcons, catEmojis) : '').join('')}
+      </div>` : ''}
       <button class="btn-add-exercise" onclick="showExercisePicker('${studentId}')" style="margin-top:8px">+ 新增動作</button>
     </div>
     <div class="prep-section">
@@ -625,46 +772,43 @@ function renderAddStudent(studentId) {
     </div>`;
 }
 
-function renderAddExercise() {
+function renderAddExercise(exerciseId) {
+  const ex = exerciseId ? DB.getExercises().find(e => e.id === exerciseId) : null;
+  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
   return `
     <div class="form-section fade-in">
       <div class="form-group">
         <label class="form-label">動作名稱 *</label>
-        <input type="text" id="fe-name" placeholder="例如：壺鈴擺盪">
+        <input type="text" id="fe-name" value="${ex?.name || ''}" placeholder="例如：壺鈴擺盪">
       </div>
       <div class="form-group">
         <label class="form-label">分類</label>
         <select id="fe-category">
-          <option value="NKT評估">NKT評估</option>
-          <option value="核心控制">核心控制</option>
-          <option value="上肢推">上肢推</option>
-          <option value="上肢拉">上肢拉</option>
-          <option value="下肢" selected>下肢</option>
-          <option value="全身">全身</option>
+          ${cats.map(c => `<option value="${c}" ${ex?.category === c ? 'selected' : (c === '下肢' && !ex ? 'selected' : '')}>${c}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">目標肌群</label>
-        <input type="text" id="fe-target" placeholder="例如：臀大肌、核心">
+        <input type="text" id="fe-target" value="${ex?.target || ''}" placeholder="例如：臀大肌、核心">
       </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">預設組數</label>
-          <input type="number" id="fe-sets" value="3" placeholder="3">
+          <input type="number" id="fe-sets" value="${ex?.defaultSets ?? 3}" placeholder="3">
         </div>
         <div class="form-group">
           <label class="form-label">預設次數</label>
-          <input type="text" id="fe-reps" value="10" placeholder="10">
+          <input type="text" id="fe-reps" value="${ex?.defaultReps ?? '10'}" placeholder="10">
         </div>
       </div>
       <div class="form-group">
         <label class="form-label">動作提示</label>
-        <textarea id="fe-cues" placeholder="教練備忘提示"></textarea>
+        <textarea id="fe-cues" placeholder="教練備忘提示">${ex?.cues || ''}</textarea>
       </div>
     </div>
     <div class="form-actions">
       <button class="btn-primary secondary" onclick="goBack()" style="flex:0.4">取消</button>
-      <button class="btn-primary accent" onclick="saveExerciseForm()">➕ 新增動作</button>
+      <button class="btn-primary accent" onclick="saveExerciseForm('${exerciseId || ''}')">${ex ? '💾 儲存' : '➕ 新增動作'}</button>
     </div>`;
 }
 
@@ -702,6 +846,57 @@ window.prepDrop = function(e, targetIdx) {
   const curr = navigationStack[navigationStack.length - 1];
   renderView(curr.view, curr.param);
 };
+
+// ── Touch drag for mobile ──
+let _tdIdx = null;
+
+function _initPrepTouchDrag() {
+  document.querySelectorAll('.prep-drag-handle').forEach(handle => {
+    handle.addEventListener('touchstart', e => {
+      _tdIdx = parseInt(handle.dataset.idx);
+      const el = document.getElementById(`prep-ex-${_tdIdx}`);
+      if (el) el.style.opacity = '0.35';
+      document.addEventListener('touchmove', _onPrepTouchMove, { passive: false });
+      document.addEventListener('touchend', _onPrepTouchEnd, { once: true });
+    }, { passive: true });
+  });
+}
+
+function _onPrepTouchMove(e) {
+  if (_tdIdx === null) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => el.style.borderTop = '');
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => {
+    const rect = el.getBoundingClientRect();
+    if (touch.clientY >= rect.top && touch.clientY < rect.bottom) {
+      const tIdx = parseInt(el.id.replace('prep-ex-', ''));
+      if (!isNaN(tIdx) && tIdx !== _tdIdx) el.style.borderTop = '2px solid var(--accent)';
+    }
+  });
+}
+
+function _onPrepTouchEnd(e) {
+  document.removeEventListener('touchmove', _onPrepTouchMove);
+  if (_tdIdx === null) return;
+  const touch = e.changedTouches[0];
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => { el.style.borderTop = ''; el.style.opacity = ''; });
+  let targetIdx = null;
+  document.querySelectorAll('[id^="prep-ex-"]').forEach(el => {
+    const rect = el.getBoundingClientRect();
+    if (touch.clientY >= rect.top && touch.clientY < rect.bottom) {
+      const tIdx = parseInt(el.id.replace('prep-ex-', ''));
+      if (!isNaN(tIdx)) targetIdx = tIdx;
+    }
+  });
+  if (targetIdx !== null && targetIdx !== _tdIdx) {
+    const moved = currentPrepPlan.splice(_tdIdx, 1)[0];
+    currentPrepPlan.splice(targetIdx, 0, moved);
+    const curr = navigationStack[navigationStack.length - 1];
+    renderView(curr.view, curr.param);
+  }
+  _tdIdx = null;
+}
 
 // ── Session exercise edit ──
 window.showEditSessionExercise = function() {
