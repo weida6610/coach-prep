@@ -679,7 +679,7 @@ function renderSession(studentId) {
       </div>
     </div>` : ''}
     ${state.currentExIdx < state.exercises.length - 1 ? `
-    <div style="position:fixed;bottom:92px;right:14px;background:rgba(18,18,31,0.96);border:1px solid var(--border-light);border-radius:12px;padding:7px 12px;max-width:160px;backdrop-filter:blur(10px);z-index:20;box-shadow:var(--shadow)">
+    <div style="position:fixed;bottom:calc(var(--nav-height) + var(--safe-bottom) + 104px);right:14px;background:rgba(18,18,31,0.96);border:1px solid var(--border-light);border-radius:12px;padding:7px 12px;max-width:160px;backdrop-filter:blur(10px);z-index:20;box-shadow:var(--shadow)">
       <div style="font-size:0.6rem;color:var(--text-muted);letter-spacing:0.06em;margin-bottom:2px">NEXT ▶</div>
       <div style="font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--accent)">${state.exercises[state.currentExIdx + 1].name}</div>
     </div>` : ''}

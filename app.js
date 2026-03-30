@@ -564,7 +564,7 @@ function showCheckInQrModal(studentId) {
   let qrHtml = '';
   if (gasUrl) {
     const checkInUrl = `${gasUrl}?id=${encodeURIComponent(student?.id || '')}&name=${encodeURIComponent(student?.name || '')}&date=${getTodayStr()}&time=${encodeURIComponent(timeStr)}`;
-    const qrSrc = `https://chart.googleapis.com/chart?chs=220x220&cht=qr&chl=${encodeURIComponent(checkInUrl)}&choe=UTF-8`;
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkInUrl)}&bgcolor=1a1a2e&color=00e5a0&qzone=1`;
     qrHtml = `
       <div style="text-align:center;padding:12px 0 4px">
         <img src="${qrSrc}" style="width:200px;height:200px;border-radius:12px;border:2px solid var(--border-light)" alt="簽到 QR Code">
