@@ -358,8 +358,7 @@ function renderBodyCheck(studentId) {
   const student = DB.getStudent(studentId);
   if (!student) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
 
-  const saved = localStorage.getItem(`body_data_${studentId}`);
-  const history = saved ? JSON.parse(saved) : [];
+  const history = DB.getBodyData(studentId);
   _lastBodyData = history.length > 0 ? history[history.length - 1] : null;
   const last = _lastBodyData;
 
@@ -442,11 +441,13 @@ window.saveBodyCheckAndStart = function(studentId) {
   const muscle = document.getElementById('bc-muscle')?.value;
   const fat    = document.getElementById('bc-fat')?.value;
   if (weight || muscle || fat) {
-    const saved = localStorage.getItem(`body_data_${studentId}`);
-    const history = saved ? JSON.parse(saved) : [];
-    history.push({ date: getTodayStr(), weight: weight || null, muscle: muscle || null, bodyFat: fat || null });
-    if (history.length > 20) history.splice(0, history.length - 20);
-    localStorage.setItem(`body_data_${studentId}`, JSON.stringify(history));
+    DB.saveBodyData({
+      studentId,
+      date: getTodayStr(),
+      weight: weight ? parseFloat(weight) : null,
+      muscle: muscle ? parseFloat(muscle) : null,
+      bodyFat: fat    ? parseFloat(fat)    : null,
+    });
   }
   currentSessionState = null;
   navigate('session', studentId);

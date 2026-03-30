@@ -559,22 +559,24 @@ const _fsdb = firebase.firestore();
 // Data Layer — Firestore + In-memory Cache
 // ============================================
 const DB = {
-  _cache: { students: [], sessions: [], exercises: [], schedule: [] },
+  _cache: { students: [], sessions: [], exercises: [], schedule: [], bodyData: [] },
 
   // ── 初始化：從 Firestore 載入資料，設定即時監聽 ──
   async init() {
     try {
-      const [studSnap, sesSnap, exSnap, schSnap] = await Promise.all([
+      const [studSnap, sesSnap, exSnap, schSnap, bdSnap] = await Promise.all([
         _fsdb.collection('students').get(),
         _fsdb.collection('sessions').get(),
         _fsdb.collection('exercises').get(),
         _fsdb.collection('schedule').get(),
+        _fsdb.collection('body_data').get(),
       ]);
 
       this._cache.students  = studSnap.docs.map(d => d.data());
       this._cache.sessions  = sesSnap.docs.map(d => d.data());
       this._cache.exercises = exSnap.docs.map(d => d.data());
       this._cache.schedule  = schSnap.docs.map(d => d.data());
+      this._cache.bodyData  = bdSnap.docs.map(d => d.data());
 
       // 第一次使用：把預設資料寫入 Firestore
       if (this._cache.students.length === 0) await this._seed();
@@ -591,6 +593,9 @@ const DB = {
       });
       _fsdb.collection('schedule').onSnapshot(snap => {
         this._cache.schedule = snap.docs.map(d => d.data());
+      });
+      _fsdb.collection('body_data').onSnapshot(snap => {
+        this._cache.bodyData = snap.docs.map(d => d.data());
       });
     } catch(e) {
       console.error('Firebase 初始化失敗', e);
@@ -748,5 +753,22 @@ const DB = {
     this._cache.schedule.splice(idx, 1);
     _fsdb.collection('schedule').doc(id).delete();
     return true;
+  },
+
+  // ── 身體數據 ──
+  getBodyData(studentId) {
+    return this._cache.bodyData
+      .filter(d => d.studentId === studentId)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  },
+
+  saveBodyData(record) {
+    // id = studentId + date，同一天只存一筆（覆蓋）
+    if (!record.id) record.id = `BD-${record.studentId}-${record.date}`;
+    const idx = this._cache.bodyData.findIndex(d => d.id === record.id);
+    if (idx >= 0) this._cache.bodyData[idx] = record;
+    else this._cache.bodyData.push(record);
+    _fsdb.collection('body_data').doc(record.id).set(record);
+    return record;
   },
 };
