@@ -707,6 +707,13 @@ const DB = {
       student.totalSessions--;
       _fsdb.collection('students').doc(student.id).set(student);
     }
+    // 同步刪除同日身體數據
+    const bdId = `BD-${session.studentId}-${session.date}`;
+    const bdIdx = this._cache.bodyData.findIndex(d => d.id === bdId);
+    if (bdIdx >= 0) {
+      this._cache.bodyData.splice(bdIdx, 1);
+      _fsdb.collection('body_data').doc(bdId).delete();
+    }
     return true;
   },
 
