@@ -444,7 +444,7 @@ function renderBodyCheck(studentId) {
           <div id="bc-fat-diff" style="text-align:center;min-height:20px;margin-top:4px;font-size:0.82rem;font-weight:700"></div>
         </div>
       </div>
-      <p style="font-size:0.68rem;color:var(--text-muted);text-align:center;margin-top:10px">體重/體脂 ▼綠色=下降佳　肌肉量 ▲綠色=上升佳</p>
+      <p style="font-size:0.68rem;color:var(--text-muted);text-align:center;margin-top:10px">▲ 紅色＝上升　▼ 綠色＝下降</p>
     </div>
     <div style="height:80px"></div>
     <div class="floating-actions">
@@ -457,21 +457,21 @@ window.updateBodyCheckDiff = function() {
   const last = _lastBodyData;
   if (!last) return;
   const fields = [
-    { inputId:'bc-weight',  diffId:'bc-weight-diff',  lastVal: last.weight,   upGood: false },
-    { inputId:'bc-muscle',  diffId:'bc-muscle-diff',  lastVal: last.muscle,   upGood: true  },
-    { inputId:'bc-fat',     diffId:'bc-fat-diff',     lastVal: last.bodyFat,  upGood: false },
+    { inputId:'bc-weight', diffId:'bc-weight-diff', lastVal: last.weight   },
+    { inputId:'bc-muscle', diffId:'bc-muscle-diff', lastVal: last.muscle   },
+    { inputId:'bc-fat',    diffId:'bc-fat-diff',    lastVal: last.bodyFat  },
   ];
-  fields.forEach(({ inputId, diffId, lastVal, upGood }) => {
+  fields.forEach(({ inputId, diffId, lastVal }) => {
     const input = document.getElementById(inputId);
     const diffEl = document.getElementById(diffId);
     if (!input || !diffEl) return;
     if (input.value === '' || lastVal === null || lastVal === undefined) { diffEl.innerHTML = ''; return; }
     const diff = parseFloat(input.value) - parseFloat(lastVal);
     if (isNaN(diff)) { diffEl.innerHTML = ''; return; }
-    const sign = diff >= 0 ? '+' : '';
+    const sign  = diff > 0 ? '+' : '';
     const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '─';
-    const isGood = (diff > 0 && upGood) || (diff < 0 && !upGood);
-    const color = diff === 0 ? 'var(--text-muted)' : isGood ? 'var(--success)' : 'var(--danger)';
+    // 統一股票邏輯：▲ 紅色（上升）、▼ 綠色（下降）、持平灰色
+    const color = diff > 0 ? 'var(--danger)' : diff < 0 ? 'var(--success)' : 'var(--text-muted)';
     diffEl.innerHTML = `<span style="color:${color}">${arrow} ${sign}${Math.abs(diff).toFixed(1)}</span>`;
   });
 };
