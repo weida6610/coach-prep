@@ -4,6 +4,7 @@
 
 let navigationStack = [];
 let sessionTimerInterval = null;
+let sessionAutoSaveInterval = null;
 
 // ============================================
 // Utilities
@@ -47,10 +48,10 @@ function renderView(view, param) {
   const actionBtn = document.getElementById('btn-header-action');
   const nav = document.getElementById('bottom-nav');
 
-  // Clear timer if leaving session
-  if (view !== 'session' && sessionTimerInterval) {
-    clearInterval(sessionTimerInterval);
-    sessionTimerInterval = null;
+  // Clear timer / auto-save if leaving session
+  if (view !== 'session') {
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+    if (sessionAutoSaveInterval) { clearInterval(sessionAutoSaveInterval); sessionAutoSaveInterval = null; }
   }
 
   // Update nav
@@ -119,6 +120,7 @@ function renderView(view, param) {
       nav.style.display = 'none';
       content.innerHTML = renderSession(param);
       startTimer();
+      startAutoSave();
       break;
 
     case 'session-detail':
@@ -478,6 +480,16 @@ function startTimer() {
   }, 1000);
 }
 
+function startAutoSave() {
+  if (sessionAutoSaveInterval) clearInterval(sessionAutoSaveInterval);
+  sessionAutoSaveInterval = setInterval(() => {
+    if (currentSessionState) {
+      localStorage.setItem('session_draft', JSON.stringify(currentSessionState));
+      showToast('💾 已自動存檔');
+    }
+  }, 5 * 60 * 1000);
+}
+
 function toggleSet(idx) {
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
   ex.completedSets[idx] = !ex.completedSets[idx];
@@ -546,9 +558,11 @@ function saveSession() {
   const savedStudentId = state.studentId;
   DB.saveSession(session);
   localStorage.removeItem(`prep_${state.studentId}`);
+  localStorage.removeItem('session_draft');
   currentSessionState = null;
   currentPrepPlan = [];
   if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+  if (sessionAutoSaveInterval) { clearInterval(sessionAutoSaveInterval); sessionAutoSaveInterval = null; }
   showToast('✅ 課程紀錄已儲存！');
 
   // 顯示簽到 QR Code，點按鈕後才回首頁
@@ -633,7 +647,14 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     // 每次 App 切回前景時，靜默檢查是否有新版本
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reg.update();
+      if (document.visibilityState === 'visible') {
+        reg.update();
+      } else {
+        // 畫面隱藏時立刻備份上課進度
+        if (currentSessionState) {
+          localStorage.setItem('session_draft', JSON.stringify(currentSessionState));
+        }
+      }
     });
     // 新 SW 接管後自動 reload，上課中除外（避免遺失 session state）
     navigator.serviceWorker.addEventListener('controllerchange', () => {

@@ -584,6 +584,20 @@ function renderSession(studentId) {
   }
 
   if (!currentSessionState) {
+    // 嘗試從自動存檔恢復（重新整理或待機後返回）
+    const draft = localStorage.getItem('session_draft');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.studentId === studentId) {
+          currentSessionState = parsed;
+          showToast('⚡ 已從自動存檔恢復進度');
+        }
+      } catch(e) {}
+    }
+  }
+
+  if (!currentSessionState) {
     currentSessionState = {
       studentId,
       startTime: Date.now(),
