@@ -569,28 +569,19 @@ function saveSession() {
   showCheckInQrModal(savedStudentId);
 }
 
+const LINE_CHECKIN_URL = 'https://line.me/R/ti/p/@244ytefp';
+
 function showCheckInQrModal(studentId) {
   const student = DB.getStudent(studentId);
-  const gasUrl = localStorage.getItem('checkin_gas_url') || '';
   const now = new Date();
   const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
-  let qrHtml = '';
-  if (gasUrl) {
-    const checkInUrl = `${gasUrl}?id=${encodeURIComponent(student?.id || '')}&name=${encodeURIComponent(student?.name || '')}&date=${getTodayStr()}&time=${encodeURIComponent(timeStr)}`;
-    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkInUrl)}&bgcolor=1a1a2e&color=00e5a0&qzone=1`;
-    qrHtml = `
-      <div style="text-align:center;padding:12px 0 4px">
-        <img src="${qrSrc}" style="width:200px;height:200px;border-radius:12px;border:2px solid var(--border-light)" alt="簽到 QR Code">
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">請學員掃描完成簽到</div>
-      </div>`;
-  } else {
-    qrHtml = `
-      <div style="text-align:center;padding:16px;background:var(--bg-card);border-radius:12px;margin:8px 0">
-        <div style="font-size:0.85rem;color:var(--text-muted)">尚未設定簽到 GAS URL</div>
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">可至首頁右上角 🔑 設定</div>
-      </div>`;
-  }
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(LINE_CHECKIN_URL)}&bgcolor=1a1a2e&color=06C755&qzone=1`;
+  const qrHtml = `
+    <div style="text-align:center;padding:12px 0 4px">
+      <img src="${qrSrc}" style="width:200px;height:200px;border-radius:12px;border:2px solid var(--border-light)" alt="LINE 簽到">
+      <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">請學員掃描進入 LINE 簽到</div>
+    </div>`;
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>

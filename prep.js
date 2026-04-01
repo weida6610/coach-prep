@@ -214,11 +214,6 @@ function showApiKeyModal() {
         <input type="password" id="api-key-input" value="${currentKey}" placeholder="API Key">
       </div>
       <p id="api-link-text" style="font-size:0.75rem;color:var(--text-secondary);line-height:1.5;margin-bottom:16px"></p>
-      <div class="form-group">
-        <label class="form-label">簽到 GAS URL（選填）</label>
-        <input type="url" id="checkin-gas-url-input" value="${localStorage.getItem('checkin_gas_url') || ''}" placeholder="https://script.google.com/..." style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text-primary);font-size:0.85rem;width:100%;box-sizing:border-box">
-        <p style="font-size:0.72rem;color:var(--text-muted);margin-top:4px">結束課程後顯示 QR 碼供學員掃描簽到</p>
-      </div>
       <button class="btn-primary accent" onclick="saveAiSettings()">💾 儲存</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
@@ -241,11 +236,9 @@ window.updateModalKeyInput = function(provider) {
 window.saveAiSettings = function() {
   const provider = document.getElementById('ai-provider-select').value;
   const key = document.getElementById('api-key-input').value.trim();
-  const gasUrl = document.getElementById('checkin-gas-url-input').value.trim();
   localStorage.setItem('ai_provider', provider);
   if (provider === 'openai') localStorage.setItem('openai_api_key', key);
   else localStorage.setItem('gemini_api_key', key);
-  if (gasUrl) localStorage.setItem('checkin_gas_url', gasUrl);
   closeModal();
   showToast('✅ 設定已儲存');
 };
