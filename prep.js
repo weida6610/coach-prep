@@ -270,18 +270,10 @@ function generateAISuggestions(studentId) {
   const student = DB.getStudent(studentId);
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
-  const plan = [];
 
-  // Helper: pick exercises from library by category
-  function getLibByCategory(cat) {
-    return exerciseLib.filter(e => e.category === cat);
-  }
-
-  // Helper: pick N random items from array
-  function pickRandom(arr, n) {
-    const shuffled = [...arr].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, n);
-  }
+  // sessions[0] = N-1（上次），sessions[1] = N-2（上上次）
+  const sessionN1 = sessions[0] || null;
+  const sessionN2 = sessions[1] || null;
 
   // Classify a session as Module A (上肢推+下肢) or B (上肢拉+下肢)
   function classifyModule(session) {
@@ -297,81 +289,72 @@ function generateAISuggestions(studentId) {
     return null;
   }
 
-  // Determine target module from N-2 / N-1
-  const sessionN2 = sessions[1] || null; // 上上次 (sessions[0]=N-1, sessions[1]=N-2)
-  const sessionN1 = sessions[0] || null; // 上次
   const modN2 = classifyModule(sessionN2);
   const modN1 = classifyModule(sessionN1);
 
-  // N should match N-2; if only N-1 exists, N is opposite of N-1
-  let targetModule = null;
-  if (modN2 === 'A') targetModule = 'A';
-  else if (modN2 === 'B') targetModule = 'B';
-  else if (modN1 === 'A') targetModule = 'B';
-  else if (modN1 === 'B') targetModule = 'A';
-
-  // 1. Warmup: pick from NKT評估 or 核心控制 in library
-  const warmupLib = [...getLibByCategory('NKT評估'), ...getLibByCategory('核心控制')];
-  if (warmupLib.length > 0) {
-    pickRandom(warmupLib, Math.min(2, warmupLib.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 2, reps: '8', weight: '-', cues: '' });
+  // ── 情況 1：有 N-2 → 以 N-2 為模板（N 與 N-2 同模組）──
+  if (sessionN2) {
+    return sessionN2.exercises.map(e => {
+      let newWeight = e.weight || '';
+      // 品質優秀 → 建議 +2kg
+      if (e.quality === '優秀' && newWeight && newWeight !== '-') {
+        const numMatch = newWeight.match(/(\d+)/);
+        if (numMatch) newWeight = newWeight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
+      }
+      return {
+        exerciseId: e.exerciseId,
+        name: e.name,
+        category: e.category || '',
+        sets: e.sets || 4,
+        reps: e.reps || '10',
+        weight: newWeight,
+        cues: ''
+      };
     });
   }
 
-  // 2. Main exercises based on module
-  if (targetModule === 'A') {
-    // Module A: 上肢推 + 下肢（偏拉/後側鏈）
-    const pushLib = getLibByCategory('上肢推');
-    const lowerLib = getLibByCategory('下肢');
-    pickRandom(pushLib, Math.min(2, pushLib.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
-    });
-    pickRandom(lowerLib, Math.min(2, lowerLib.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
-    });
-  } else if (targetModule === 'B') {
-    // Module B: 上肢拉 + 下肢（偏推/前側鏈）
-    const pullLib = getLibByCategory('上肢拉');
-    const lowerLib = getLibByCategory('下肢');
-    pickRandom(pullLib, Math.min(2, pullLib.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
-    });
-    pickRandom(lowerLib, Math.min(2, lowerLib.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
-    });
-  } else {
-    // No history or unclear: balanced selection
-    const allStrength = [...getLibByCategory('上肢推'), ...getLibByCategory('上肢拉'), ...getLibByCategory('下肢'), ...getLibByCategory('全身')];
-    pickRandom(allStrength, Math.min(4, allStrength.length)).forEach(e => {
-      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
-    });
-  }
-
-  // 3. Core: pick 1 from 核心控制 (if not already added in warmup)
-  const coreLib = getLibByCategory('核心控制').filter(e => !plan.find(p => p.exerciseId === e.id));
-  if (coreLib.length > 0) {
-    const core = pickRandom(coreLib, 1)[0];
-    plan.push({ exerciseId: core.id, name: core.name, category: core.category, sets: 3, reps: '10', weight: '-', cues: '' });
-  }
-
-  // 4. Progressive overload: if N-2 exists (same module), carry over weights
-  const referenceSession = targetModule && modN2 === targetModule ? sessionN2 : sessionN1;
-  if (referenceSession) {
-    plan.forEach(p => {
-      const prev = referenceSession.exercises.find(e => e.exerciseId === p.exerciseId || e.name === p.name);
-      if (prev) {
-        p.weight = prev.weight || '';
-        p.reps = prev.reps || p.reps;
-        p.sets = prev.sets || p.sets;
-        // If quality was excellent, suggest +2kg
-        if (prev.quality === '優秀' && prev.weight && prev.weight !== '-') {
-          const numMatch = prev.weight.match(/(\d+)/);
-          if (numMatch) p.weight = prev.weight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
-        }
+  // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
+  if (sessionN1) {
+    // 帶入 N-1 中非主訓練的部分（暖身、核心等），主訓練改為相反模組
+    const plan = [];
+    // 保留 N-1 的暖身/NKT/核心動作
+    sessionN1.exercises.forEach(e => {
+      const cat = e.category || '';
+      if (cat.includes('NKT') || cat.includes('核心') || cat.includes('暖身')) {
+        plan.push({
+          exerciseId: e.exerciseId, name: e.name, category: cat,
+          sets: e.sets || 2, reps: e.reps || '8', weight: e.weight || '-', cues: ''
+        });
       }
     });
+    // 主訓練：N-1 的相反模組，從動作庫挑選
+    const oppositeModule = modN1 === 'A' ? 'B' : 'A';
+    const mainCats = oppositeModule === 'A' ? ['上肢推', '下肢'] : ['上肢拉', '下肢'];
+    mainCats.forEach(cat => {
+      const available = exerciseLib.filter(e => e.category === cat);
+      const shuffled = [...available].sort(() => Math.random() - 0.5);
+      shuffled.slice(0, 2).forEach(e => {
+        plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+      });
+    });
+    return plan;
   }
 
+  // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
+  const plan = [];
+  const categories = ['NKT評估', '核心控制', '上肢推', '上肢拉', '下肢', '全身'];
+  categories.forEach(cat => {
+    const available = exerciseLib.filter(e => e.category === cat);
+    const count = (cat === 'NKT評估' || cat === '核心控制') ? 1 : 2;
+    const shuffled = [...available].sort(() => Math.random() - 0.5);
+    shuffled.slice(0, Math.min(count, available.length)).forEach(e => {
+      const isWarmup = cat === 'NKT評估' || cat === '核心控制';
+      plan.push({
+        exerciseId: e.id, name: e.name, category: e.category,
+        sets: isWarmup ? 2 : 4, reps: isWarmup ? '8' : '10', weight: isWarmup ? '-' : '', cues: ''
+      });
+    });
+  });
   return plan;
 }
 
