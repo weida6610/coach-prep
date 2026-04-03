@@ -269,62 +269,109 @@ function addAiExerciseToLibrary(idx) {
 function generateAISuggestions(studentId) {
   const student = DB.getStudent(studentId);
   const sessions = DB.getSessions(studentId);
-  const lastSession = sessions[0];
+  const exerciseLib = DB.getExercises();
   const plan = [];
 
-  // Always start with warmup
-  plan.push({ exerciseId:'E003', name:'90/90 髖關節活動度', category:'暖身', sets:2, reps:'8', weight:'-', cues:'骨盆保持中立' });
-
-  if (student.currentPhase === '矯正期') {
-    plan.push({ exerciseId:'E004', name:'貓牛式', category:'暖身', sets:2, reps:'10', weight:'-', cues:'配合呼吸' });
-    // NKT-based suggestions
-    if (student.nktFindings?.includes('臀中肌')) {
-      plan.push({ exerciseId:'E020', name:'Clam Shell', category:'矯正動作', sets:3, reps:'15', weight:'彈力帶', cues:'骨盆不旋轉' });
-      plan.push({ exerciseId:'E023', name:'側走怪獸步', category:'矯正動作', sets:3, reps:'12步/側', weight:'彈力帶', cues:'膝蓋對齊腳尖' });
-    }
-    if (student.nktFindings?.includes('核心') || student.nktFindings?.includes('腹橫')) {
-      plan.push({ exerciseId:'E021', name:'Dead Bug', category:'矯正動作', sets:3, reps:'10', weight:'-', cues:'腰椎貼地' });
-      plan.push({ exerciseId:'E022', name:'Bird Dog', category:'矯正動作', sets:3, reps:'10/側', weight:'-', cues:'軀幹穩定' });
-    }
-    if (student.nktFindings?.includes('肩')) {
-      plan.push({ exerciseId:'E025', name:'肩胛骨YTWL', category:'矯正動作', sets:3, reps:'8', weight:'-', cues:'肩胛下壓後縮' });
-    }
-    if (student.nktFindings?.includes('臀大肌')) {
-      plan.push({ exerciseId:'E026', name:'髖屈肌伸展+啟動', category:'矯正動作', sets:2, reps:'30秒/側', weight:'-', cues:'臀部夾緊' });
-    }
-    if (plan.length < 5) {
-      plan.push({ exerciseId:'E021', name:'Dead Bug', category:'矯正動作', sets:3, reps:'10', weight:'-', cues:'腰椎貼地' });
-    }
-  } else {
-    // For strength/performance phases
-    plan.push({ exerciseId:'E005', name:'世界最偉大伸展', category:'暖身', sets:2, reps:'5/側', weight:'-', cues:'動作慢且到位' });
-
-    // Add corrective based on NKT findings
-    if (student.nktFindings?.includes('臀中肌')) {
-      plan.push({ exerciseId:'E020', name:'Clam Shell', category:'矯正動作', sets:2, reps:'12', weight:'彈力帶', cues:'暖身啟動用' });
-    }
-
-    // Progressive overload from last session
-    if (lastSession) {
-      const strengthExercises = lastSession.exercises.filter(e => {
-        const lib = DB.getExercises().find(l => l.id === e.exerciseId);
-        return lib?.category === '肌力訓練';
-      });
-      strengthExercises.forEach(e => {
-        let newWeight = e.weight;
-        if (e.quality === '優秀' && e.weight !== '-') {
-          const numMatch = e.weight.match(/(\d+)/);
-          if (numMatch) newWeight = e.weight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
-        }
-        plan.push({ exerciseId:e.exerciseId, name:e.name, category:'肌力訓練', sets:e.sets, reps:e.reps, weight:newWeight, cues:'' });
-      });
-    }
-    if (plan.filter(p => p.category === '肌力訓練').length === 0) {
-      plan.push({ exerciseId:'E030', name:'高腳杯深蹲', category:'肌力訓練', sets:4, reps:'10', weight:'12kg', cues:'膝蓋對齊腳尖' });
-      plan.push({ exerciseId:'E031', name:'啞鈴羅馬尼亞硬舉', category:'肌力訓練', sets:4, reps:'10', weight:'10kg*2', cues:'髖鉸鏈' });
-      plan.push({ exerciseId:'E033', name:'單臂啞鈴划船', category:'肌力訓練', sets:3, reps:'12', weight:'12kg', cues:'肩胛先啟動' });
-    }
+  // Helper: pick exercises from library by category
+  function getLibByCategory(cat) {
+    return exerciseLib.filter(e => e.category === cat);
   }
+
+  // Helper: pick N random items from array
+  function pickRandom(arr, n) {
+    const shuffled = [...arr].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, n);
+  }
+
+  // Classify a session as Module A (上肢推+下肢) or B (上肢拉+下肢)
+  function classifyModule(session) {
+    if (!session) return null;
+    let push = 0, pull = 0;
+    session.exercises.forEach(e => {
+      const cat = e.category || '';
+      if (cat.includes('推')) push++;
+      if (cat.includes('拉')) pull++;
+    });
+    if (push > pull) return 'A';
+    if (pull > push) return 'B';
+    return null;
+  }
+
+  // Determine target module from N-2 / N-1
+  const sessionN2 = sessions[1] || null; // 上上次 (sessions[0]=N-1, sessions[1]=N-2)
+  const sessionN1 = sessions[0] || null; // 上次
+  const modN2 = classifyModule(sessionN2);
+  const modN1 = classifyModule(sessionN1);
+
+  // N should match N-2; if only N-1 exists, N is opposite of N-1
+  let targetModule = null;
+  if (modN2 === 'A') targetModule = 'A';
+  else if (modN2 === 'B') targetModule = 'B';
+  else if (modN1 === 'A') targetModule = 'B';
+  else if (modN1 === 'B') targetModule = 'A';
+
+  // 1. Warmup: pick from NKT評估 or 核心控制 in library
+  const warmupLib = [...getLibByCategory('NKT評估'), ...getLibByCategory('核心控制')];
+  if (warmupLib.length > 0) {
+    pickRandom(warmupLib, Math.min(2, warmupLib.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 2, reps: '8', weight: '-', cues: '' });
+    });
+  }
+
+  // 2. Main exercises based on module
+  if (targetModule === 'A') {
+    // Module A: 上肢推 + 下肢（偏拉/後側鏈）
+    const pushLib = getLibByCategory('上肢推');
+    const lowerLib = getLibByCategory('下肢');
+    pickRandom(pushLib, Math.min(2, pushLib.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+    });
+    pickRandom(lowerLib, Math.min(2, lowerLib.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+    });
+  } else if (targetModule === 'B') {
+    // Module B: 上肢拉 + 下肢（偏推/前側鏈）
+    const pullLib = getLibByCategory('上肢拉');
+    const lowerLib = getLibByCategory('下肢');
+    pickRandom(pullLib, Math.min(2, pullLib.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+    });
+    pickRandom(lowerLib, Math.min(2, lowerLib.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+    });
+  } else {
+    // No history or unclear: balanced selection
+    const allStrength = [...getLibByCategory('上肢推'), ...getLibByCategory('上肢拉'), ...getLibByCategory('下肢'), ...getLibByCategory('全身')];
+    pickRandom(allStrength, Math.min(4, allStrength.length)).forEach(e => {
+      plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+    });
+  }
+
+  // 3. Core: pick 1 from 核心控制 (if not already added in warmup)
+  const coreLib = getLibByCategory('核心控制').filter(e => !plan.find(p => p.exerciseId === e.id));
+  if (coreLib.length > 0) {
+    const core = pickRandom(coreLib, 1)[0];
+    plan.push({ exerciseId: core.id, name: core.name, category: core.category, sets: 3, reps: '10', weight: '-', cues: '' });
+  }
+
+  // 4. Progressive overload: if N-2 exists (same module), carry over weights
+  const referenceSession = targetModule && modN2 === targetModule ? sessionN2 : sessionN1;
+  if (referenceSession) {
+    plan.forEach(p => {
+      const prev = referenceSession.exercises.find(e => e.exerciseId === p.exerciseId || e.name === p.name);
+      if (prev) {
+        p.weight = prev.weight || '';
+        p.reps = prev.reps || p.reps;
+        p.sets = prev.sets || p.sets;
+        // If quality was excellent, suggest +2kg
+        if (prev.quality === '優秀' && prev.weight && prev.weight !== '-') {
+          const numMatch = prev.weight.match(/(\d+)/);
+          if (numMatch) p.weight = prev.weight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
+        }
+      }
+    });
+  }
+
   return plan;
 }
 
@@ -535,14 +582,14 @@ function renderPrep(studentId) {
         ${lastSession.conditionNotes ? `<li>狀態：${lastSession.conditionNotes}</li>` : ''}
       </ul></div></div>
     </div>` : ''}
-    ${sessions.length >= 2 ? `
+    ${sessions.length >= 1 ? `
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title" style="cursor:pointer;display:flex;align-items:center;gap:6px" onclick="document.getElementById('history-panel').hidden=!document.getElementById('history-panel').hidden;this.querySelector('.hist-arrow').textContent=document.getElementById('history-panel').hidden?'▶':'▼'">
         <span class="hist-arrow" style="font-size:0.65rem;color:var(--text-muted)">▶</span> 📊 N-2 / N-1 課表對照
       </div>
       <div id="history-panel" hidden>
-        ${sessions.slice(0, 3).reverse().map((s, i, arr) => {
-          const label = arr.length === 3 ? ['N-2（上上次）','N-1（上次）','N-0（最近）'][i] : arr.length === 2 ? ['N-1（上次）','N-0（最近）'][i] : ['N-0（最近）'];
+        ${sessions.slice(0, 2).reverse().map((s, i, arr) => {
+          const label = arr.length === 2 ? ['N-2（上上次）','N-1（上次）'][i] : ['N-1（上次）'];
           return `
         <div style="margin-top:${i>0?'12':'6'}px;padding:10px;border-radius:var(--radius-md);background:var(--bg-card);border:1px solid var(--border)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
