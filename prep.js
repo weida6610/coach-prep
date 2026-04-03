@@ -510,7 +510,7 @@ function renderPrep(studentId) {
         currentPrepPlan._prepNotes = data.notes || '';
       } catch(e) { currentPrepPlan = generateAISuggestions(studentId); }
     } else {
-      currentPrepPlan = [];
+      currentPrepPlan = generateAISuggestions(studentId);
     }
     currentPrepPlan.studentId = studentId;
   }
