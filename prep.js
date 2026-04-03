@@ -535,6 +535,41 @@ function renderPrep(studentId) {
         ${lastSession.conditionNotes ? `<li>狀態：${lastSession.conditionNotes}</li>` : ''}
       </ul></div></div>
     </div>` : ''}
+    ${sessions.length >= 2 ? `
+    <div class="prep-section fade-in stagger-1">
+      <div class="prep-section-title" style="cursor:pointer;display:flex;align-items:center;gap:6px" onclick="document.getElementById('history-panel').hidden=!document.getElementById('history-panel').hidden;this.querySelector('.hist-arrow').textContent=document.getElementById('history-panel').hidden?'▶':'▼'">
+        <span class="hist-arrow" style="font-size:0.65rem;color:var(--text-muted)">▶</span> 📊 N-2 / N-1 課表對照
+      </div>
+      <div id="history-panel" hidden>
+        ${sessions.slice(0, 3).reverse().map((s, i, arr) => {
+          const label = arr.length === 3 ? ['N-2（上上次）','N-1（上次）','N-0（最近）'][i] : arr.length === 2 ? ['N-1（上次）','N-0（最近）'][i] : ['N-0（最近）'];
+          return `
+        <div style="margin-top:${i>0?'12':'6'}px;padding:10px;border-radius:var(--radius-md);background:var(--bg-card);border:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--accent)">${label}</div>
+            <div style="font-size:0.68rem;color:var(--text-muted)">${formatDate(s.date)}</div>
+          </div>
+          <div style="display:flex;gap:4px;padding:0 0 4px;font-size:0.62rem;color:var(--text-muted);font-weight:500">
+            <div style="flex:1">動作</div>
+            <div style="width:52px;text-align:center">重量</div>
+            <div style="width:36px;text-align:center">次</div>
+            <div style="width:28px;text-align:center">組</div>
+            <div style="width:32px;text-align:center">品質</div>
+          </div>
+          ${s.exercises.map(e => `
+          <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-top:1px solid var(--border);font-size:0.78rem">
+            <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.name}</div>
+            <div style="width:52px;text-align:center;color:var(--accent);font-size:0.75rem">${e.weight||'-'}</div>
+            <div style="width:36px;text-align:center;font-size:0.75rem">${e.reps||'-'}</div>
+            <div style="width:28px;text-align:center;font-size:0.75rem">${e.sets||'-'}</div>
+            <div style="width:32px;text-align:center;font-size:0.72rem">${e.quality==='優秀'?'⭐':e.quality==='良好'?'👍':e.quality==='待加強'?'⚡':'-'}</div>
+          </div>`).join('')}
+          ${s.coachNotes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-muted)">📝 ${s.coachNotes}</div>` : ''}
+          ${s.nextSuggestion ? `<div style="font-size:0.72rem;color:var(--accent-secondary)">💡 ${s.nextSuggestion}</div>` : ''}
+        </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
     <div class="prep-section fade-in stagger-2">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div class="prep-section-title" style="margin-bottom:0">📋 課表動作</div>
