@@ -568,9 +568,9 @@ function renderPrep(studentId) {
     ${sessions.length >= 1 ? `
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title" style="cursor:pointer;display:flex;align-items:center;gap:6px" onclick="document.getElementById('history-panel').hidden=!document.getElementById('history-panel').hidden;this.querySelector('.hist-arrow').textContent=document.getElementById('history-panel').hidden?'▶':'▼'">
-        <span class="hist-arrow" style="font-size:0.65rem;color:var(--text-muted)">▶</span> 📊 N-2 / N-1 課表對照
+        <span class="hist-arrow" style="font-size:0.65rem;color:var(--text-muted)">▼</span> 📊 N-2 / N-1 課表對照
       </div>
-      <div id="history-panel" hidden>
+      <div id="history-panel">
         ${sessions.slice(0, 2).reverse().map((s, i, arr) => {
           const label = arr.length === 2 ? ['N-2（上上次）','N-1（上次）'][i] : ['N-1（上次）'];
           return `
