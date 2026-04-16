@@ -174,16 +174,43 @@ function renderSessionDetail(sessionId) {
     </div>
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title">🏋️ 訓練內容</div>
-      ${session.exercises.map(ex => `
+      ${session.exercises.map(ex => {
+        const legacyW = (ex.weight && ex.weight !== '-') ? ex.weight : '';
+        const sets = (ex.allSets && ex.allSets.length)
+          ? ex.allSets
+          : (ex.completed || []).map(() => ({ weight: legacyW, reps: ex.reps }));
+        const completed = ex.completed || [];
+        // 將連續 (weight,reps) 相同的組合併
+        const groups = [];
+        sets.forEach((s, i) => {
+          const w = s.weight || '';
+          const r = s.reps || ex.reps || '';
+          const done = !!completed[i];
+          const last = groups[groups.length - 1];
+          if (last && last.weight === w && last.reps === r) {
+            last.count++;
+            last.doneCount += done ? 1 : 0;
+          } else {
+            groups.push({ weight: w, reps: r, count: 1, doneCount: done ? 1 : 0 });
+          }
+        });
+        return `
         <div class="session-detail-exercise">
           <div class="session-detail-exercise-name">${ex.name}</div>
           <div class="session-detail-sets">
-            ${ex.completed.map((c, i) => `<span class="session-detail-set ${c ? 'completed' : ''}">${c ? '✅' : '⬜'} 第${i+1}組 ${ex.reps}</span>`).join('')}
+            ${groups.map(g => {
+              const allDone = g.doneCount === g.count;
+              const noneDone = g.doneCount === 0;
+              const icon = allDone ? '✅' : noneDone ? '⬜' : '🟡';
+              const spec = `${g.weight ? g.weight + 'kg × ' : ''}${g.reps} × ${g.count}組`;
+              const partial = (!allDone && !noneDone) ? ` (完成 ${g.doneCount}/${g.count})` : '';
+              return `<span class="session-detail-set ${allDone ? 'completed' : ''}">${icon} ${spec}${partial}</span>`;
+            }).join('')}
           </div>
-          ${ex.weight !== '-' ? `<div class="session-detail-quality">重量: ${ex.weight}</div>` : ''}
           <div class="session-detail-quality">品質: ${ex.quality}</div>
           ${ex.notes ? `<div class="session-detail-note">📝 ${ex.notes}</div>` : ''}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>
     ${session.conditionNotes ? `
     <div class="prep-section fade-in stagger-2">

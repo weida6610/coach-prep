@@ -32,7 +32,7 @@ async function callGeminiAI(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
-  const recentSessions = sessions.slice(0, 3).reverse(); // Oldest to newest (index 0=N-2, 1=N-1, 2=most recent)
+  const recentSessions = sessions.slice(0, 5).reverse(); // Oldest to newest (up to N-4)
   let historyText = '（無歷史紀錄）';
 
   // Classify each session as Module A (上肢推+下肢拉) or B (上肢拉+下肢推)
@@ -61,8 +61,10 @@ async function callGeminiAI(studentId) {
   else if (modN1 === 'B（上肢拉＋下肢推）') targetModule = 'A（上肢推＋下肢拉）';
 
   if (recentSessions.length > 0) {
+    const labels = ['N-4', 'N-3', 'N-2（上上次）', 'N-1（上次）', 'N-0（最近）'];
+    const offset = 5 - recentSessions.length;
     historyText = recentSessions.map((s, i) => {
-      const label = i === 0 ? 'N-2（上上次）' : i === 1 ? 'N-1（上次）' : 'N-0（最近）';
+      const label = labels[i + offset] || `N-${recentSessions.length - 1 - i}`;
       return `
 ### ${label}: ${s.date} (${s.sessionType})
 - 模組分析：${classifyModule(s) || '不明確'}
@@ -100,11 +102,17 @@ ${historyText}
 ## 動作庫參考（可使用庫內動作也可自由創建）
 ${libText}
 
+## 排課強度遞增規則（極重要）
+1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
+2. **Push up（扶槓）**：槓架越低強度越大。例如「槓6」比「槓8」強度更大。品質優秀時建議降一格槓數
+3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，尤其是備註顯示 **time out** 或品質標記為「待加強」的項目，這些動作應優先安排進課表
+
 ## 你的任務
 請提出 **剛好 3 個** 符合本次模組（${targetModule}）且適合該學員目標的「創意補充動作」：
 1. 必須符合學員訓練目標、身體狀況，有傷處請迴避
 2. 動作必須呼應本次模組（${targetModule}）的主要肌群
-3. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
+3. 遵守上述強度遞增規則來建議重量
+4. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
@@ -272,9 +280,52 @@ function generateAISuggestions(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
-  // sessions[0] = N-1（上次），sessions[1] = N-2（上上次）
+  // sessions[0] = N-1（上次），sessions[1] = N-2（上上次），...
   const sessionN1 = sessions[0] || null;
   const sessionN2 = sessions[1] || null;
+  const sessionN3 = sessions[2] || null;
+  const sessionN4 = sessions[3] || null;
+
+  // 判斷是否為 DB/Machine 類動作（增加強度單位較小）
+  function isDbOrMachine(name) {
+    const n = (name || '').toLowerCase();
+    return n.includes('db') || n.includes('dumbbell') || n.includes('啞鈴')
+      || n.includes('machine') || n.includes('機械');
+  }
+
+  // Push up（扶槓）：偵測槓數，數字越小強度越大
+  function adjustPushUpBar(name, quality) {
+    if (!name) return null;
+    const match = name.match(/槓(\d+)/);
+    if (!match) return null;
+    const currentBar = parseInt(match[1]);
+    // 品質優秀 → 降一格（強度增加）
+    if (quality === '優秀' && currentBar > 1) {
+      return name.replace(`槓${currentBar}`, `槓${currentBar - 1}`);
+    }
+    return null; // 維持不變
+  }
+
+  // 計算加重後的重量
+  function progressWeight(weight, name, quality) {
+    let newWeight = weight || '';
+    if (quality === '優秀' && newWeight && newWeight !== '-') {
+      const increment = isDbOrMachine(name) ? 2.5 : 5;
+      const numMatch = newWeight.match(/(\d+\.?\d*)/);
+      if (numMatch) {
+        const newVal = parseFloat(numMatch[1]) + increment;
+        const display = newVal % 1 === 0 ? String(newVal) : newVal.toFixed(1);
+        newWeight = newWeight.replace(numMatch[1], display);
+      }
+    }
+    return newWeight;
+  }
+
+  // 收集某個 session 的動作名稱集合
+  function getExerciseNames(session) {
+    if (!session) return new Set();
+    return new Set(session.exercises.map(e => e.name));
+  }
 
   // Classify a session as Module A (上肢推+下肢) or B (上肢拉+下肢)
   function classifyModule(session) {
@@ -295,23 +346,61 @@ function generateAISuggestions(studentId) {
 
   // ── 情況 1：有 N-2 → 以 N-2 為模板（N 與 N-2 同模組）──
   if (sessionN2) {
-    return sessionN2.exercises.map(e => {
-      let newWeight = e.weight || '';
-      // 品質優秀 → 建議 +2kg
-      if (e.quality === '優秀' && newWeight && newWeight !== '-') {
-        const numMatch = newWeight.match(/(\d+)/);
-        if (numMatch) newWeight = newWeight.replace(numMatch[1], String(parseInt(numMatch[1]) + 2));
-      }
+    const plan = sessionN2.exercises.map(e => {
+      // Push up 扶槓特殊處理
+      let name = e.name;
+      const adjustedName = adjustPushUpBar(name, e.quality);
+      if (adjustedName) name = adjustedName;
+
       return {
         exerciseId: e.exerciseId,
-        name: e.name,
+        name: name,
         category: e.category || '',
         sets: e.sets || 4,
         reps: e.reps || '10',
-        weight: newWeight,
+        weight: progressWeight(e.weight, e.name, e.quality),
         cues: ''
       };
     });
+
+    // ── 規則 3：從 N-1 補入 N-2/N-3/N-4 都沒出現過的動作 ──
+    if (sessionN1) {
+      const namesN2 = getExerciseNames(sessionN2);
+      const namesN3 = getExerciseNames(sessionN3);
+      const namesN4 = getExerciseNames(sessionN4);
+      const alreadyInPlan = new Set(plan.map(e => e.name));
+
+      // 找出 N-1 中獨有的動作（N-2/N-3/N-4 都沒出現）
+      const uniqueFromN1 = sessionN1.exercises.filter(e =>
+        !namesN2.has(e.name) && !namesN3.has(e.name) && !namesN4.has(e.name)
+        && !alreadyInPlan.has(e.name)
+      );
+
+      // 優先排序：time out / 需改善的排前面
+      uniqueFromN1.sort((a, b) => {
+        const aUrgent = (a.notes || '').toLowerCase().includes('time out')
+          || (a.quality === '待加強') ? 1 : 0;
+        const bUrgent = (b.notes || '').toLowerCase().includes('time out')
+          || (b.quality === '待加強') ? 1 : 0;
+        return bUrgent - aUrgent;
+      });
+
+      uniqueFromN1.forEach(e => {
+        const isTimeout = (e.notes || '').toLowerCase().includes('time out');
+        const needsWork = e.quality === '待加強';
+        plan.push({
+          exerciseId: e.exerciseId,
+          name: e.name,
+          category: e.category || '',
+          sets: e.sets || 3,
+          reps: e.reps || '10',
+          weight: e.weight || '',
+          cues: isTimeout ? '⏱ 上次 time out，建議留意' : needsWork ? '⚠ 上次待加強' : '📌 N-1 獨有動作'
+        });
+      });
+    }
+
+    return plan;
   }
 
   // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
@@ -425,6 +514,11 @@ function renderBodyCheck(studentId) {
   const history = DB.getBodyData(studentId);
   _lastBodyData = history.length > 0 ? history[history.length - 1] : null;
   const last = _lastBodyData;
+  const recent4 = history.slice(-4);
+  while (recent4.length < 4) recent4.unshift(null);
+  const daysSinceLast = last ? Math.floor((new Date() - new Date(last.date)) / (1000*60*60*24)) : null;
+  const needsMeasure = daysSinceLast !== null && daysSinceLast >= 28;
+  const cellStyle = 'background:var(--bg-card);border-radius:10px;padding:10px 4px;text-align:center;min-height:86px;display:flex;flex-direction:column;justify-content:center';
 
   return `
     <div class="prep-student-bar fade-in">
@@ -434,18 +528,27 @@ function renderBodyCheck(studentId) {
         <div class="student-meta">上課前身體數據記錄</div>
       </div>
     </div>
-    ${last ? `
-    <div class="prep-section fade-in stagger-1">
-      <div class="prep-section-title">📊 上次記錄 <span style="font-size:0.7rem;color:var(--text-muted)">${last.date}</span></div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
-        ${[['體重','kg',last.weight],['肌肉量','kg',last.muscle],['體脂率','%',last.bodyFat]].map(([label,unit,val]) => `
-          <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center">
-            <div style="font-size:0.68rem;color:var(--text-muted)">${label}</div>
-            <div style="font-size:1.3rem;font-weight:700">${val || '--'}</div>
-            <div style="font-size:0.68rem;color:var(--text-muted)">${unit}</div>
-          </div>`).join('')}
-      </div>
+    ${needsMeasure ? `
+    <div class="fade-in" style="margin:0 16px 10px;background:rgba(255,107,107,0.12);border:1px solid var(--danger);border-radius:10px;padding:10px 12px;font-size:0.82rem;color:var(--danger)">
+      ⚠️ 距離上次量測已 ${daysSinceLast} 天，建議今天記錄體脂數據
     </div>` : ''}
+    <div class="prep-section fade-in stagger-1">
+      <div class="prep-section-title">📊 歷史紀錄（最近 4 次）</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+        ${recent4.map(r => {
+          if (!r) return `<div style="${cellStyle};opacity:0.35">
+            <div style="font-size:0.68rem;color:var(--text-muted)">--</div>
+            <div style="font-size:0.68rem;color:var(--text-muted);margin-top:6px">尚無</div>
+          </div>`;
+          return `<div style="${cellStyle}">
+            <div style="font-size:0.62rem;color:var(--text-muted)">${(r.date||'').slice(5)}</div>
+            <div style="font-size:0.95rem;font-weight:700;margin-top:3px">${r.weight || '--'}<span style="font-size:0.55rem;color:var(--text-muted);margin-left:1px">kg</span></div>
+            <div style="font-size:0.68rem;color:var(--text-secondary);margin-top:1px">💪 ${r.muscle || '--'}</div>
+            <div style="font-size:0.68rem;color:var(--text-secondary);margin-top:1px">📊 ${r.bodyFat || '--'}%</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
     <div class="prep-section fade-in stagger-2">
       <div class="prep-section-title">📝 今日數據（選填）</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
@@ -712,9 +815,10 @@ function renderSession(studentId) {
       <div class="active-exercise-header">
         <div>
           <div class="active-exercise-number">動作 ${state.currentExIdx + 1} / ${state.exercises.length}</div>
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <div class="active-exercise-title">${ex.name}</div>
             <button onclick="showEditSessionExercise()" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-size:0.72rem;padding:2px 7px;cursor:pointer;flex-shrink:0">✏️ 改</button>
+            <button onclick="deleteCurrentSessionExercise()" style="background:none;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:0.72rem;padding:2px 7px;cursor:pointer;flex-shrink:0">🗑️ 刪除</button>
           </div>
           <div class="active-exercise-target">目標: ${uniqueSpecs}</div>
         </div>
@@ -1036,24 +1140,26 @@ let _editSets = [];
 
 function _renderEditSetsModal(exName) {
   const inputStyle = 'background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:7px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;width:100%;box-sizing:border-box';
+  const canRemove = _editSets.length > 1;
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">✏️ ${exName}</div></div>
     <div style="padding:0 16px 8px">
-      <div style="display:grid;grid-template-columns:36px 1fr 1fr;gap:6px;margin-bottom:6px">
+      <div style="display:grid;grid-template-columns:36px 1fr 1fr 32px;gap:6px;margin-bottom:6px">
         <div></div>
         <div style="font-size:0.68rem;color:var(--text-muted);text-align:center">重量</div>
         <div style="font-size:0.68rem;color:var(--text-muted);text-align:center">次數</div>
+        <div></div>
       </div>
       ${_editSets.map((s, i) => `
-        <div style="display:grid;grid-template-columns:36px 1fr 1fr;gap:6px;margin-bottom:6px;align-items:center">
+        <div style="display:grid;grid-template-columns:36px 1fr 1fr 32px;gap:6px;margin-bottom:6px;align-items:center">
           <div style="font-size:0.72rem;color:var(--text-muted);text-align:center">第${i+1}組</div>
           <input type="text" value="${s.weight||''}" placeholder="kg" oninput="_editSets[${i}].weight=this.value" style="${inputStyle}">
           <input type="text" value="${s.reps||''}" placeholder="次" oninput="_editSets[${i}].reps=this.value" style="${inputStyle}">
+          <button onclick="_removeEditSet(${i})" ${canRemove ? '' : 'disabled'} title="刪除此組" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--danger);font-size:1rem;line-height:1;padding:6px 0;cursor:pointer;${canRemove ? '' : 'opacity:0.25;cursor:not-allowed'}">－</button>
         </div>`).join('')}
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button onclick="_addEditSet()" style="flex:1;background:none;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);padding:8px;cursor:pointer;font-size:0.8rem">＋ 新增一組</button>
-        <button onclick="_removeLastEditSet()" style="flex:0 0 44px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);padding:8px;cursor:pointer" ${_editSets.length <= 1 ? 'disabled style="opacity:0.3"' : ''}>－</button>
+      <div style="margin-top:10px">
+        <button onclick="_addEditSet()" style="width:100%;background:none;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);padding:8px;cursor:pointer;font-size:0.8rem">＋ 新增一組</button>
       </div>
     </div>
     <div style="padding:8px 16px 24px">
@@ -1081,6 +1187,30 @@ window._removeLastEditSet = function() {
   _editSets.pop();
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
   _renderEditSetsModal(ex.name);
+};
+
+window._removeEditSet = function(i) {
+  if (_editSets.length <= 1) return;
+  _editSets.splice(i, 1);
+  const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
+  _renderEditSetsModal(ex.name);
+};
+
+window.deleteCurrentSessionExercise = function() {
+  if (!currentSessionState) return;
+  const state = currentSessionState;
+  if (state.exercises.length <= 1) {
+    if (typeof showToast === 'function') showToast('⚠️ 至少保留一個動作');
+    else alert('至少保留一個動作');
+    return;
+  }
+  const ex = state.exercises[state.currentExIdx];
+  if (!confirm(`是否真的要刪除本項目？\n\n「${ex.name}」將從本次課程中移除`)) return;
+  state.exercises.splice(state.currentExIdx, 1);
+  if (state.currentExIdx >= state.exercises.length) {
+    state.currentExIdx = state.exercises.length - 1;
+  }
+  renderView('session', state.studentId);
 };
 
 window.applyEditSessionExercise = function() {

@@ -545,6 +545,7 @@ function saveSession() {
       sets: (e.allSets||[]).length || e.sets,
       reps: e.reps,
       weight: e.actualWeight || e.weight,
+      allSets: (e.allSets||[]).map(s => ({ weight: s.weight || '', reps: s.reps || e.reps || '' })),
       completed: e.completedSets,
       quality: e.quality || '未評',
       notes: e.notes,
