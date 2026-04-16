@@ -217,7 +217,7 @@ function renderSessionDetail(sessionId) {
               const allDone = g.doneCount === g.count;
               const noneDone = g.doneCount === 0;
               const icon = allDone ? '✅' : noneDone ? '⬜' : '🟡';
-              const spec = `${g.weight ? g.weight + 'kg × ' : ''}${g.reps} × ${g.count}組`;
+              const spec = `${g.weight ? g.weight + ' × ' : ''}${g.reps} × ${g.count}組`;
               const partial = (!allDone && !noneDone) ? ` (完成 ${g.doneCount}/${g.count})` : '';
               return `<span class="session-detail-set ${allDone ? 'completed' : ''}">${icon} ${spec}${partial}</span>`;
             }).join('')}
