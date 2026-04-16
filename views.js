@@ -176,9 +176,24 @@ function renderSessionDetail(sessionId) {
       <div class="prep-section-title">🏋️ 訓練內容</div>
       ${session.exercises.map(ex => {
         const legacyW = (ex.weight && ex.weight !== '-') ? ex.weight : '';
-        const sets = (ex.allSets && ex.allSets.length)
-          ? ex.allSets
-          : (ex.completed || []).map(() => ({ weight: legacyW, reps: ex.reps }));
+        // 舊紀錄沒 allSets，從 weight+reps+sets+subSets 重建
+        const reconstructLegacy = () => {
+          const out = [];
+          const mainSets = parseInt(ex.sets) || (ex.completed || []).length || 1;
+          // 若有 subSets，主動作只用 (mainSets - 子組總數) 作為主組數
+          const subTotal = (ex.subSets || []).reduce((a, ss) => a + (parseInt(ss.sets) || 1), 0);
+          const primaryCount = Math.max(1, mainSets - subTotal);
+          for (let i = 0; i < primaryCount; i++) out.push({ weight: legacyW, reps: ex.reps });
+          (ex.subSets || []).forEach(ss => {
+            const n = parseInt(ss.sets) || 1;
+            for (let i = 0; i < n; i++) out.push({ weight: ss.weight || '', reps: ss.reps || ex.reps });
+          });
+          // 若仍與 completed 長度不符，補齊或截斷
+          const target = (ex.completed || []).length || out.length;
+          while (out.length < target) out.push({ weight: legacyW, reps: ex.reps });
+          return out.slice(0, target || out.length);
+        };
+        const sets = (ex.allSets && ex.allSets.length) ? ex.allSets : reconstructLegacy();
         const completed = ex.completed || [];
         // 將連續 (weight,reps) 相同的組合併
         const groups = [];
