@@ -33,6 +33,23 @@ _fsdb.enablePersistence({ synchronizeTabs: true }).catch(err => {
 });
 
 // ============================================
+// Dashboard 自動重畫（debounce 300ms，避免 GAS 連續寫入造成多次 re-render）
+// 只在使用者停留於 dashboard 且無 modal 開啟時觸發
+// ============================================
+let _dashRefreshTimer = null;
+function _scheduleDashboardRefresh() {
+  if (_dashRefreshTimer) clearTimeout(_dashRefreshTimer);
+  _dashRefreshTimer = setTimeout(() => {
+    _dashRefreshTimer = null;
+    if (typeof navigationStack === 'undefined' || !navigationStack.length) return;
+    const curr = navigationStack[navigationStack.length - 1];
+    if (curr.view !== 'dashboard') return;
+    if (document.querySelector('.modal-overlay.active')) return;
+    if (typeof renderView === 'function') renderView('dashboard');
+  }, 300);
+}
+
+// ============================================
 // DB — Firestore + In-memory Cache
 // ============================================
 const DB = {
@@ -70,6 +87,7 @@ const DB = {
       });
       _fsdb.collection('schedule').onSnapshot(snap => {
         this._cache.schedule = snap.docs.map(d => d.data());
+        _scheduleDashboardRefresh();
       });
       _fsdb.collection('body_data').onSnapshot(snap => {
         this._cache.bodyData = snap.docs.map(d => d.data());
