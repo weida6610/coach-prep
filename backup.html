@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coach Prep — 資料備份工具</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #e8e8f0;
+      padding: 24px;
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; color: #00e5a0; }
+    .sub { color: #888; font-size: 0.9rem; margin-bottom: 24px; }
+    .box {
+      background: #1a1a2a;
+      border: 1px solid #2a2a3a;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    button {
+      background: #00e5a0;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 24px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+    button:hover { background: #00c890; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: #6c5ce7; color: #fff; }
+    button.secondary:hover { background: #5a4cd7; }
+    .log {
+      background: #0a0a14;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      min-height: 120px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      background: #2a2a3a;
+      margin-right: 6px;
+    }
+    .ok { color: #00e5a0; }
+    .warn { color: #f97316; }
+    .err { color: #ff6b6b; }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid #2a2a3a;
+    }
+    .stat:last-child { border-bottom: none; }
+    .hint {
+      font-size: 0.8rem;
+      color: #888;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>📦 Coach Prep 資料備份工具</h1>
+  <div class="sub">一鍵備份整個 Firestore 資料為 JSON 檔案（不修改任何資料）</div>
+
+  <div class="box">
+    <button id="btn-backup">📥 下載完整備份（JSON）</button>
+    <div class="hint">備份範圍：students / sessions / exercises / schedule / body_data / prep_plans 六個 collection</div>
+  </div>
+
+  <div class="box">
+    <div id="log" class="log">等待操作…</div>
+  </div>
+
+  <div class="box">
+    <div style="font-size:0.85rem;color:#888">
+      <strong style="color:#e8e8f0">使用建議：</strong><br>
+      • 重大變更前先備份一次<br>
+      • 至少保留 3 份最近備份<br>
+      • 備份檔可還原用（之後會做還原工具）
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: 'AIzaSyBGZFWML4XFJ49HBr66aJmnQsC9TYWZpvc',
+      authDomain: 'rbtc-coach-prep.firebaseapp.com',
+      projectId: 'rbtc-coach-prep',
+      storageBucket: 'rbtc-coach-prep.firebasestorage.app',
+      messagingSenderId: '905088928318',
+      appId: '1:905088928318:web:1a455820caed5c41b5df6f'
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const COLLECTIONS = ['students', 'sessions', 'exercises', 'schedule', 'body_data', 'prep_plans'];
+    const logEl = document.getElementById('log');
+    const btn = document.getElementById('btn-backup');
+
+    function log(msg, cls = '') {
+      const line = document.createElement('div');
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLog() {
+      logEl.innerHTML = '';
+    }
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+
+    function nowStamp() {
+      const d = new Date();
+      return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    }
+
+    function bytesHuman(n) {
+      if (n < 1024) return n + ' B';
+      if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1024/1024).toFixed(2) + ' MB';
+    }
+
+    async function backup() {
+      btn.disabled = true;
+      clearLog();
+      log(`🔄 開始備份... ${new Date().toLocaleString('zh-TW')}`);
+
+      const payload = {
+        meta: {
+          projectId: firebaseConfig.projectId,
+          backupAt: new Date().toISOString(),
+          version: 1,
+        },
+        collections: {},
+        counts: {},
+      };
+
+      try {
+        for (const name of COLLECTIONS) {
+          log(`  讀取 ${name}...`);
+          const snap = await db.collection(name).get();
+          const docs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          payload.collections[name] = docs;
+          payload.counts[name] = docs.length;
+          log(`    ✓ ${docs.length} 筆`, 'ok');
+        }
+
+        const json = JSON.stringify(payload, null, 2);
+        const size = new Blob([json]).size;
+
+        log('');
+        log('📊 備份摘要', 'ok');
+        for (const [k, v] of Object.entries(payload.counts)) {
+          log(`  ${k.padEnd(12)} ${v} 筆`);
+        }
+        log(`  總檔案大小: ${bytesHuman(size)}`);
+
+        const filename = `rbtc-coach-prep-backup-${nowStamp()}.json`;
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        log('');
+        log(`✅ 下載完成：${filename}`, 'ok');
+        log('💡 建議將此檔案另存到雲端硬碟或 USB 備份', 'warn');
+      } catch (e) {
+        log('❌ 備份失敗：' + (e.message || e), 'err');
+        console.error(e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', backup);
+  </script>
+</body>
+</html>
