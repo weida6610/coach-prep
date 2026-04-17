@@ -558,7 +558,7 @@ function saveSession() {
 
   const savedStudentId = state.studentId;
   DB.saveSession(session);
-  localStorage.removeItem(`prep_${state.studentId}`);
+  DB.deletePrepPlan(state.studentId);
   localStorage.removeItem('session_draft');
   currentSessionState = null;
   currentPrepPlan = [];

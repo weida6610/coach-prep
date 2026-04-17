@@ -636,13 +636,10 @@ function renderPrep(studentId) {
   const lastSession = sessions[0];
 
   if (!currentPrepPlan || currentPrepPlan.studentId !== studentId) {
-    const saved = localStorage.getItem(`prep_${studentId}`);
-    if (saved) {
-      try {
-        const data = JSON.parse(saved);
-        currentPrepPlan = data.exercises || [];
-        currentPrepPlan._prepNotes = data.notes || '';
-      } catch(e) { currentPrepPlan = generateAISuggestions(studentId); }
+    const saved = DB.getPrepPlan(studentId);
+    if (saved && saved.exercises && saved.exercises.length) {
+      currentPrepPlan = saved.exercises;
+      currentPrepPlan._prepNotes = saved.notes || '';
     } else {
       currentPrepPlan = generateAISuggestions(studentId);
     }
@@ -899,7 +896,7 @@ function updateSubSet(idx, subIdx, field, val) {
 function savePrepPlan(studentId) {
   const notes = document.getElementById('prep-notes')?.value || '';
   currentPrepPlan._prepNotes = notes;
-  localStorage.setItem(`prep_${studentId}`, JSON.stringify({ exercises: currentPrepPlan.map(e => ({...e})), notes }));
+  DB.savePrepPlan(studentId, { exercises: currentPrepPlan.map(e => ({...e})), notes });
 
   // 在今日排程項目上記錄備課時間戳
   const todayStr = getTodayStr();

@@ -36,17 +36,18 @@ _fsdb.enablePersistence({ synchronizeTabs: true }).catch(err => {
 // DB — Firestore + In-memory Cache
 // ============================================
 const DB = {
-  _cache: { students: [], sessions: [], exercises: [], schedule: [], bodyData: [] },
+  _cache: { students: [], sessions: [], exercises: [], schedule: [], bodyData: [], prepPlans: {} },
 
   // ── 初始化：從 Firestore 載入資料，設定即時監聽 ──
   async init() {
     try {
-      const [studSnap, sesSnap, exSnap, schSnap, bdSnap] = await Promise.all([
+      const [studSnap, sesSnap, exSnap, schSnap, bdSnap, ppSnap] = await Promise.all([
         _fsdb.collection('students').get(),
         _fsdb.collection('sessions').get(),
         _fsdb.collection('exercises').get(),
         _fsdb.collection('schedule').get(),
         _fsdb.collection('body_data').get(),
+        _fsdb.collection('prep_plans').get(),
       ]);
 
       this._cache.students  = studSnap.docs.map(d => d.data());
@@ -54,6 +55,8 @@ const DB = {
       this._cache.exercises = exSnap.docs.map(d => d.data());
       this._cache.schedule  = schSnap.docs.map(d => d.data());
       this._cache.bodyData  = bdSnap.docs.map(d => d.data());
+      this._cache.prepPlans = {};
+      ppSnap.docs.forEach(d => { this._cache.prepPlans[d.id] = d.data(); });
 
       // 即時監聽：其他裝置有更動時自動同步
       _fsdb.collection('students').onSnapshot(snap => {
@@ -70,6 +73,12 @@ const DB = {
       });
       _fsdb.collection('body_data').onSnapshot(snap => {
         this._cache.bodyData = snap.docs.map(d => d.data());
+      });
+      _fsdb.collection('prep_plans').onSnapshot(snap => {
+        snap.docChanges().forEach(chg => {
+          if (chg.type === 'removed') delete this._cache.prepPlans[chg.doc.id];
+          else this._cache.prepPlans[chg.doc.id] = chg.doc.data();
+        });
       });
     } catch(e) {
       console.error('Firebase 初始化失敗', e);
@@ -232,5 +241,35 @@ const DB = {
     else this._cache.bodyData.push(record);
     _fsdb.collection('body_data').doc(record.id).set(record);
     return record;
+  },
+
+  // ── 備課計畫（跨裝置同步）──
+  // Firestore doc id = studentId。本地 localStorage 作為離線 fallback
+  getPrepPlan(studentId) {
+    const cloud = this._cache.prepPlans[studentId];
+    if (cloud) return cloud;
+    try {
+      const local = localStorage.getItem(`prep_${studentId}`);
+      return local ? JSON.parse(local) : null;
+    } catch(e) { return null; }
+  },
+
+  savePrepPlan(studentId, data) {
+    const record = {
+      studentId,
+      exercises: data.exercises || [],
+      notes: data.notes || '',
+      updatedAt: Date.now(),
+    };
+    this._cache.prepPlans[studentId] = record;
+    try { localStorage.setItem(`prep_${studentId}`, JSON.stringify({ exercises: record.exercises, notes: record.notes })); } catch(e) {}
+    _fsdb.collection('prep_plans').doc(studentId).set(record);
+    return record;
+  },
+
+  deletePrepPlan(studentId) {
+    delete this._cache.prepPlans[studentId];
+    try { localStorage.removeItem(`prep_${studentId}`); } catch(e) {}
+    _fsdb.collection('prep_plans').doc(studentId).delete();
   },
 };
