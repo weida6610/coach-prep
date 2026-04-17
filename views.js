@@ -2,6 +2,46 @@
 // View Renderers
 // ============================================
 
+// 將 session exercise 的 allSets / subSets / legacy weight 統一整理成合併後的組群
+// 回傳 [{weight, reps, count, doneCount}, ...]，連續相同 (weight,reps) 合併成一組
+function getSessionExerciseGroups(ex) {
+  const legacyW = (ex.weight && ex.weight !== '-') ? ex.weight : '';
+  let sets;
+  if (ex.allSets && ex.allSets.length) {
+    sets = ex.allSets;
+  } else {
+    // 舊紀錄無 allSets：從 weight + reps + sets + subSets 重建
+    sets = [];
+    const mainSets = parseInt(ex.sets) || (ex.completed || []).length || 1;
+    const subTotal = (ex.subSets || []).reduce((a, ss) => a + (parseInt(ss.sets) || 1), 0);
+    const primaryCount = Math.max(1, mainSets - subTotal);
+    for (let i = 0; i < primaryCount; i++) sets.push({ weight: legacyW, reps: ex.reps });
+    (ex.subSets || []).forEach(ss => {
+      const n = parseInt(ss.sets) || 1;
+      for (let i = 0; i < n; i++) sets.push({ weight: ss.weight || '', reps: ss.reps || ex.reps });
+    });
+    // 若仍與 completed 長度不符，補齊或截斷
+    const target = (ex.completed || []).length || sets.length;
+    while (sets.length < target) sets.push({ weight: legacyW, reps: ex.reps });
+    sets = sets.slice(0, target || sets.length);
+  }
+  const completed = ex.completed || [];
+  const groups = [];
+  sets.forEach((s, i) => {
+    const w = s.weight || '';
+    const r = s.reps || ex.reps || '';
+    const done = !!completed[i];
+    const last = groups[groups.length - 1];
+    if (last && last.weight === w && last.reps === r) {
+      last.count++;
+      last.doneCount += done ? 1 : 0;
+    } else {
+      groups.push({ weight: w, reps: r, count: 1, doneCount: done ? 1 : 0 });
+    }
+  });
+  return groups;
+}
+
 function renderDashboard() {
   const students = DB.getStudents();
   const todayStr = getTodayStr();
@@ -175,40 +215,7 @@ function renderSessionDetail(sessionId) {
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title">🏋️ 訓練內容</div>
       ${session.exercises.map(ex => {
-        const legacyW = (ex.weight && ex.weight !== '-') ? ex.weight : '';
-        // 舊紀錄沒 allSets，從 weight+reps+sets+subSets 重建
-        const reconstructLegacy = () => {
-          const out = [];
-          const mainSets = parseInt(ex.sets) || (ex.completed || []).length || 1;
-          // 若有 subSets，主動作只用 (mainSets - 子組總數) 作為主組數
-          const subTotal = (ex.subSets || []).reduce((a, ss) => a + (parseInt(ss.sets) || 1), 0);
-          const primaryCount = Math.max(1, mainSets - subTotal);
-          for (let i = 0; i < primaryCount; i++) out.push({ weight: legacyW, reps: ex.reps });
-          (ex.subSets || []).forEach(ss => {
-            const n = parseInt(ss.sets) || 1;
-            for (let i = 0; i < n; i++) out.push({ weight: ss.weight || '', reps: ss.reps || ex.reps });
-          });
-          // 若仍與 completed 長度不符，補齊或截斷
-          const target = (ex.completed || []).length || out.length;
-          while (out.length < target) out.push({ weight: legacyW, reps: ex.reps });
-          return out.slice(0, target || out.length);
-        };
-        const sets = (ex.allSets && ex.allSets.length) ? ex.allSets : reconstructLegacy();
-        const completed = ex.completed || [];
-        // 將連續 (weight,reps) 相同的組合併
-        const groups = [];
-        sets.forEach((s, i) => {
-          const w = s.weight || '';
-          const r = s.reps || ex.reps || '';
-          const done = !!completed[i];
-          const last = groups[groups.length - 1];
-          if (last && last.weight === w && last.reps === r) {
-            last.count++;
-            last.doneCount += done ? 1 : 0;
-          } else {
-            groups.push({ weight: w, reps: r, count: 1, doneCount: done ? 1 : 0 });
-          }
-        });
+        const groups = getSessionExerciseGroups(ex);
         return `
         <div class="session-detail-exercise">
           <div class="session-detail-exercise-name">${ex.name}</div>

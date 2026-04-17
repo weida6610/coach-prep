@@ -687,14 +687,18 @@ function renderPrep(studentId) {
             <div style="width:28px;text-align:center">組</div>
             <div style="width:32px;text-align:center">品質</div>
           </div>
-          ${s.exercises.map(e => `
-          <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-top:1px solid var(--border);font-size:0.78rem">
-            <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.name}</div>
-            <div style="width:52px;text-align:center;color:var(--accent);font-size:0.75rem">${e.weight||'-'}</div>
-            <div style="width:36px;text-align:center;font-size:0.75rem">${e.reps||'-'}</div>
-            <div style="width:28px;text-align:center;font-size:0.75rem">${e.sets||'-'}</div>
-            <div style="width:32px;text-align:center;font-size:0.72rem">${e.quality==='優秀'?'⭐':e.quality==='良好'?'👍':e.quality==='待加強'?'⚡':'-'}</div>
-          </div>`).join('')}
+          ${s.exercises.map(e => {
+            const groups = getSessionExerciseGroups(e);
+            const qualIcon = e.quality==='優秀'?'⭐':e.quality==='良好'?'👍':e.quality==='待加強'?'⚡':'-';
+            return groups.map((g, gi) => `
+          <div style="display:flex;align-items:center;gap:4px;padding:${gi===0?'5':'2'}px 0;${gi===0?'border-top:1px solid var(--border);':''}font-size:0.78rem">
+            <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${gi===0?e.name:''}</div>
+            <div style="width:52px;text-align:center;color:var(--accent);font-size:0.75rem">${g.weight||'-'}</div>
+            <div style="width:36px;text-align:center;font-size:0.75rem">${g.reps||'-'}</div>
+            <div style="width:28px;text-align:center;font-size:0.75rem">${g.count}</div>
+            <div style="width:32px;text-align:center;font-size:0.72rem">${gi===0?qualIcon:''}</div>
+          </div>`).join('');
+          }).join('')}
           ${s.coachNotes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-muted)">📝 ${s.coachNotes}</div>` : ''}
           ${s.nextSuggestion ? `<div style="font-size:0.72rem;color:var(--accent-secondary)">💡 ${s.nextSuggestion}</div>` : ''}
         </div>`;
