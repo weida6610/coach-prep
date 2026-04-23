@@ -251,9 +251,9 @@ function renderSessionDetail(sessionId) {
 }
 
 function renderExercises() {
-  const categories = ['全部','NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
-  const catIcons = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢':'lower', '全身':'full' };
-  const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢':'🦵', '全身':'⚡' };
+  const categories = ['全部','NKT評估','核心控制','上肢推','上肢拉','下肢推','下肢拉','心肺','全身'];
+  const catIcons = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢推':'lower-push', '下肢拉':'lower-pull', '心肺':'cardio', '全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢推':'🦵', '下肢拉':'🍑', '心肺':'❤️', '全身':'⚡' };
   const exercises = DB.getExercises();
 
   return `

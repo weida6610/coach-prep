@@ -875,6 +875,13 @@ select {
 .exercise-icon.strength { background: var(--danger-dim); }
 .exercise-icon.nkt { background: var(--accent-secondary-dim); }
 .exercise-icon.cooldown { background: var(--success-dim); }
+.exercise-icon.core { background: var(--info-dim); }
+.exercise-icon.push { background: rgba(239, 68, 68, 0.18); }
+.exercise-icon.pull { background: rgba(59, 130, 246, 0.18); }
+.exercise-icon.lower-push { background: rgba(249, 115, 22, 0.18); }
+.exercise-icon.lower-pull { background: rgba(234, 179, 8, 0.18); }
+.exercise-icon.cardio { background: rgba(236, 72, 153, 0.18); }
+.exercise-icon.full { background: var(--warning-dim); }
 
 .exercise-details {
   flex: 1;

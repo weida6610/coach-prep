@@ -348,8 +348,8 @@ function removePrepExercise(idx) {
 
 function showExercisePicker(studentId) {
   const exercises = DB.getExercises();
-  const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢':'🦵', '全身':'⚡' };
-  const catIcons  = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢':'lower', '全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢推':'🦵', '下肢拉':'🍑', '心肺':'❤️', '全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢推':'lower-push', '下肢拉':'lower-pull', '心肺':'cardio', '全身':'full' };
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
@@ -379,14 +379,14 @@ function showExercisePicker(studentId) {
 }
 
 function showInlineNewExercise(studentId) {
-  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
+  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢推','下肢拉','心肺','全身'];
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">新增自訂動作</div></div>
     <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
       <input type="text" id="ni-name" placeholder="動作名稱 *" class="form-input">
       <select id="ni-category" class="form-input">
-        ${cats.map((c,i) => `<option value="${c}" ${i===4?'selected':''}>${c}</option>`).join('')}
+        ${cats.map(c => `<option value="${c}" ${c==='下肢推'?'selected':''}>${c}</option>`).join('')}
       </select>
       <input type="text" id="ni-target" placeholder="目標肌群" class="form-input">
       <div style="display:flex;gap:8px">
@@ -610,7 +610,7 @@ window.finishSession = function() {
 function determineSessionType(exercises) {
   const cats = exercises.map(e => e.category);
   if (cats.includes('NKT評估')) return 'NKT評估';
-  const types = ['核心控制','上肢推','上肢拉','下肢','全身'];
+  const types = ['核心控制','上肢推','上肢拉','下肢推','下肢拉','心肺','全身'];
   const matched = types.filter(t => cats.includes(t));
   if (matched.length >= 2) return '混合訓練';
   if (matched.length === 1) return matched[0];

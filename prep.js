@@ -117,7 +117,7 @@ ${libText}
 [
   {
     "name": "動作名稱",
-    "category": "暖身|NKT評估|核心控制|上肢推|上肢拉|下肢|全身",
+    "category": "NKT評估|核心控制|上肢推|上肢拉|下肢推|下肢拉|心肺|全身",
     "target": "目標肌群",
     "sets": 3,
     "reps": "12",
@@ -327,17 +327,17 @@ function generateAISuggestions(studentId) {
     return new Set(session.exercises.map(e => e.name));
   }
 
-  // Classify a session as Module A (上肢推+下肢) or B (上肢拉+下肢)
+  // Classify session as Module A (上肢推+下肢拉) or B (上肢拉+下肢推)
   function classifyModule(session) {
     if (!session) return null;
-    let push = 0, pull = 0;
+    let aScore = 0, bScore = 0;  // A = 上肢推 + 下肢拉；B = 上肢拉 + 下肢推
     session.exercises.forEach(e => {
       const cat = e.category || '';
-      if (cat.includes('推')) push++;
-      if (cat.includes('拉')) pull++;
+      if (cat === '上肢推' || cat === '下肢拉') aScore++;
+      if (cat === '上肢拉' || cat === '下肢推') bScore++;
     });
-    if (push > pull) return 'A';
-    if (pull > push) return 'B';
+    if (aScore > bScore) return 'A';
+    if (bScore > aScore) return 'B';
     return null;
   }
 
@@ -419,7 +419,7 @@ function generateAISuggestions(studentId) {
     });
     // 主訓練：N-1 的相反模組，從動作庫挑選
     const oppositeModule = modN1 === 'A' ? 'B' : 'A';
-    const mainCats = oppositeModule === 'A' ? ['上肢推', '下肢'] : ['上肢拉', '下肢'];
+    const mainCats = oppositeModule === 'A' ? ['上肢推', '下肢拉'] : ['上肢拉', '下肢推'];
     mainCats.forEach(cat => {
       const available = exerciseLib.filter(e => e.category === cat);
       const shuffled = [...available].sort(() => Math.random() - 0.5);
@@ -432,7 +432,8 @@ function generateAISuggestions(studentId) {
 
   // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
   const plan = [];
-  const categories = ['NKT評估', '核心控制', '上肢推', '上肢拉', '下肢', '全身'];
+  // 新學員首次備課：A 模組打底（上肢推 + 下肢拉）
+  const categories = ['NKT評估', '核心控制', '上肢推', '下肢拉', '全身'];
   categories.forEach(cat => {
     const available = exerciseLib.filter(e => e.category === cat);
     const count = (cat === 'NKT評估' || cat === '核心控制') ? 1 : 2;
@@ -646,8 +647,8 @@ function renderPrep(studentId) {
     currentPrepPlan.studentId = studentId;
   }
 
-  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
-  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
 
   return `
     <div class="prep-student-bar fade-in">
@@ -791,8 +792,8 @@ function renderSession(studentId) {
 
   const state = currentSessionState;
   const ex = state.exercises[state.currentExIdx];
-  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
-  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
   const qualities = [
     { emoji:'😊', label:'優秀' }, { emoji:'🙂', label:'良好' },
     { emoji:'😐', label:'尚可' }, { emoji:'😓', label:'需改善' }
@@ -917,8 +918,8 @@ function savePrepPlan(studentId) {
 
 function showSessionAddExercise() {
   const exercises = DB.getExercises();
-  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢':'🦵','全身':'⚡' };
-  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢':'lower','全身':'full' };
+  const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
+  const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">臨時新增動作</div></div>
@@ -1012,7 +1013,7 @@ function renderAddStudent(studentId) {
 
 function renderAddExercise(exerciseId) {
   const ex = exerciseId ? DB.getExercises().find(e => e.id === exerciseId) : null;
-  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢','全身'];
+  const cats = ['NKT評估','核心控制','上肢推','上肢拉','下肢推','下肢拉','心肺','全身'];
   return `
     <div class="form-section fade-in">
       <div class="form-group">
@@ -1022,7 +1023,7 @@ function renderAddExercise(exerciseId) {
       <div class="form-group">
         <label class="form-label">分類</label>
         <select id="fe-category">
-          ${cats.map(c => `<option value="${c}" ${ex?.category === c ? 'selected' : (c === '下肢' && !ex ? 'selected' : '')}>${c}</option>`).join('')}
+          ${cats.map(c => `<option value="${c}" ${ex?.category === c ? 'selected' : (c === '下肢推' && !ex ? 'selected' : '')}>${c}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">

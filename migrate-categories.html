@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coach Prep — 動作分類遷移工具</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a; color: #e8e8f0; padding: 24px; min-height: 100vh; line-height: 1.6;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; color: #00e5a0; }
+    .sub { color: #888; font-size: 0.9rem; margin-bottom: 24px; }
+    .box {
+      background: #1a1a2a; border: 1px solid #2a2a3a; border-radius: 12px;
+      padding: 20px; margin-bottom: 16px;
+    }
+    button {
+      background: #00e5a0; color: #000; border: none; border-radius: 10px;
+      padding: 14px 24px; font-size: 1rem; font-weight: 600; cursor: pointer;
+      width: 100%; margin-bottom: 12px;
+    }
+    button:hover { background: #00c890; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; background: #555; }
+    button.warn { background: #f97316; }
+    button.warn:hover { background: #ea580c; }
+    button.danger { background: #ef4444; color: #fff; }
+    button.danger:hover { background: #dc2626; }
+    .log {
+      background: #0a0a14; border: 1px solid #2a2a3a; border-radius: 8px;
+      padding: 12px; font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.82rem; white-space: pre-wrap; min-height: 120px;
+      max-height: 500px; overflow-y: auto;
+    }
+    .ok { color: #00e5a0; }
+    .warn { color: #f97316; }
+    .err { color: #ff6b6b; }
+    .info { color: #74b9ff; }
+    .hint { font-size: 0.8rem; color: #888; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    td, th { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2a2a3a; }
+    th { color: #888; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <h1>🔀 動作分類遷移工具</h1>
+  <div class="sub">
+    把「下肢」拆成「下肢推」「下肢拉」+ 新增「心肺」+ 修正錯誤分類 + 合併平衡動作入核心控制
+  </div>
+
+  <div class="box">
+    <strong>⚠ 執行前必做：</strong>
+    <div class="hint">
+      1. 先到 <a href="backup.html" style="color:#00e5a0">backup.html</a> 做一次完整備份<br>
+      2. 備份下載完成後再回來此頁執行
+    </div>
+  </div>
+
+  <div class="box">
+    <button id="btn-preview">① 預覽變更（不寫入）</button>
+    <button id="btn-execute" disabled class="warn">② 確認執行遷移</button>
+    <div class="hint">流程：先按「預覽」檢查 log，確認無誤後再按「執行」</div>
+  </div>
+
+  <div class="box">
+    <div id="log" class="log">等待操作…</div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: 'AIzaSyBGZFWML4XFJ49HBr66aJmnQsC9TYWZpvc',
+      authDomain: 'rbtc-coach-prep.firebaseapp.com',
+      projectId: 'rbtc-coach-prep',
+      storageBucket: 'rbtc-coach-prep.firebasestorage.app',
+      messagingSenderId: '905088928318',
+      appId: '1:905088928318:web:1a455820caed5c41b5df6f'
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const authReady = firebase.auth().signInAnonymously();
+
+    // ── 動作名稱 → 新 category 對照表 ──
+    // 對照原則：依動作名稱精確匹配（trim 後大小寫不敏感）
+    const NAME_TO_CAT = {
+      // 下肢推（膝主導）
+      'Zercher Squat':   '下肢推',
+      'Box Squat':       '下肢推',
+      'Lunge':           '下肢推',
+      'Goblet Squat':    '下肢推',
+      'Back Squat':      '下肢推',
+      '高腳杯深蹲':       '下肢推',
+      '抱槓深蹲':         '下肢推',
+      '箱上深蹲':         '下肢推',
+      // 下肢拉（髖主導）
+      'Hip Thruster':    '下肢拉',
+      'SLRDL':           '下肢拉',
+      'RDL':             '下肢拉',
+      'DBx2 RDL':        '下肢拉',
+      'Trap Bar DL':     '下肢拉',
+      'Deadlift':        '下肢拉',
+      'Trap Bar SL DL':  '下肢拉',
+      'Sumo Deadlift':   '下肢拉',
+      '羅馬尼亞硬舉':      '下肢拉',
+      '單腿羅馬尼亞硬舉（扶架）': '下肢拉',
+      '單腿羅馬尼亞硬舉':  '下肢拉',
+      '傳統硬舉':         '下肢拉',
+      '傳統硬舉（架高）':  '下肢拉',
+      '六角槓硬舉':        '下肢拉',
+      '六角槓硬舉（架高）': '下肢拉',
+      '器材臀推機':        '下肢拉',
+      // 上肢推（分類錯）
+      'DB OHP':          '上肢推',
+      // 心肺
+      'Assault Bike':    '心肺',
+      // 核心控制
+      '足底筋膜強化':       '核心控制',
+      'Dead Bug':        '核心控制',
+      'Bird Dog':        '核心控制',
+      // NKT 評估（分類錯）
+      '下肢神經夾擠test': 'NKT評估',
+      '下肢神經夾擠':     'NKT評估',
+    };
+
+    // ── 要刪除的 exercise id（重複的 Hip Thruster）──
+    const DELETE_IDS = ['E1774832980071'];
+
+    const logEl = document.getElementById('log');
+    const btnPreview = document.getElementById('btn-preview');
+    const btnExecute = document.getElementById('btn-execute');
+
+    function log(msg, cls = '') {
+      const line = document.createElement('div');
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function clearLog() { logEl.innerHTML = ''; }
+
+    function remapCategory(name, oldCat) {
+      const key = (name || '').trim();
+      if (NAME_TO_CAT[key]) return NAME_TO_CAT[key];
+      // 特殊：舊分類是「平衡動作」→ 一律併入核心控制（即使名稱對照找不到）
+      if (oldCat === '平衡動作') return '核心控制';
+      return null;  // null = 不改
+    }
+
+    async function scan(executeMode) {
+      clearLog();
+      log(`🔄 ${executeMode ? '執行中' : '預覽中'}... ${new Date().toLocaleString('zh-TW')}`);
+      btnPreview.disabled = true;
+      btnExecute.disabled = true;
+
+      try {
+        await authReady;
+        log('  ✓ 匿名登入完成', 'ok');
+
+        // ── 1. exercises ──
+        log('\n📦 exercises collection', 'info');
+        const exSnap = await db.collection('exercises').get();
+        const exChanges = [];
+        const exDeletes = [];
+        exSnap.docs.forEach(d => {
+          const data = d.data();
+          if (DELETE_IDS.includes(d.id)) {
+            exDeletes.push({ id: d.id, name: data.name });
+            return;
+          }
+          const newCat = remapCategory(data.name, data.category);
+          if (newCat && newCat !== data.category) {
+            exChanges.push({ id: d.id, name: data.name, from: data.category, to: newCat });
+          }
+        });
+        log(`  將更新 ${exChanges.length} 筆、刪除 ${exDeletes.length} 筆`);
+        exChanges.forEach(c => log(`  · ${c.name}: ${c.from} → ${c.to}`));
+        exDeletes.forEach(d => log(`  ✗ 刪除重複：${d.name} (${d.id})`, 'warn'));
+
+        // ── 2. sessions ──
+        log('\n📋 sessions collection', 'info');
+        const sesSnap = await db.collection('sessions').get();
+        const sesChanges = [];
+        sesSnap.docs.forEach(d => {
+          const data = d.data();
+          let touched = false;
+          const newExercises = (data.exercises || []).map(ex => {
+            const newCat = remapCategory(ex.name, ex.category);
+            if (newCat && newCat !== ex.category) {
+              touched = true;
+              return { ...ex, category: newCat };
+            }
+            return ex;
+          });
+          if (touched) sesChanges.push({ id: d.id, docRef: d.ref, newExercises, data });
+        });
+        log(`  將更新 ${sesChanges.length} 筆 session（約 ${sesChanges.reduce((n,s)=>n+s.newExercises.filter((e,i)=>e.category!==s.data.exercises[i].category).length,0)} 個動作）`);
+
+        // ── 3. prep_plans ──
+        log('\n📝 prep_plans collection', 'info');
+        const ppSnap = await db.collection('prep_plans').get();
+        const ppChanges = [];
+        ppSnap.docs.forEach(d => {
+          const data = d.data();
+          let touched = false;
+          const newExercises = (data.exercises || []).map(ex => {
+            const newCat = remapCategory(ex.name, ex.category);
+            if (newCat && newCat !== ex.category) {
+              touched = true;
+              return { ...ex, category: newCat };
+            }
+            return ex;
+          });
+          if (touched) ppChanges.push({ id: d.id, docRef: d.ref, newExercises });
+        });
+        log(`  將更新 ${ppChanges.length} 筆 prep plan`);
+
+        // ── 總計 ──
+        const totalWrites = exChanges.length + exDeletes.length + sesChanges.length + ppChanges.length;
+        log(`\n📊 總寫入量：${totalWrites}（免費額度 20000/day，使用 ${(totalWrites/200).toFixed(1)}%）`, 'info');
+
+        if (!executeMode) {
+          log('\n✅ 預覽完成，請檢查上方清單', 'ok');
+          log('   確認無誤後按「② 確認執行遷移」', 'ok');
+          btnPreview.disabled = false;
+          btnExecute.disabled = false;
+          return;
+        }
+
+        // ── 真的寫入 ──
+        log('\n🔧 開始寫入...', 'warn');
+
+        for (const c of exChanges) {
+          await db.collection('exercises').doc(c.id).update({ category: c.to });
+          log(`  ✓ 更新 exercise: ${c.name}`, 'ok');
+        }
+        for (const d of exDeletes) {
+          await db.collection('exercises').doc(d.id).delete();
+          log(`  ✗ 刪除 exercise: ${d.name}`, 'warn');
+        }
+        for (const s of sesChanges) {
+          await s.docRef.update({ exercises: s.newExercises });
+          log(`  ✓ 更新 session: ${s.id}`, 'ok');
+        }
+        for (const p of ppChanges) {
+          await p.docRef.update({ exercises: p.newExercises });
+          log(`  ✓ 更新 prep plan: ${p.id}`, 'ok');
+        }
+
+        log(`\n🎉 遷移完成！共 ${totalWrites} 筆寫入`, 'ok');
+        log('   現在可以回主 App 確認（記得 Ctrl+F5 強制刷新）', 'ok');
+        btnPreview.disabled = false;
+        // btnExecute 保持 disabled，避免重複執行
+      } catch (e) {
+        log(`\n❌ 錯誤：${e.message}`, 'err');
+        console.error(e);
+        btnPreview.disabled = false;
+        btnExecute.disabled = false;
+      }
+    }
+
+    btnPreview.addEventListener('click', () => scan(false));
+    btnExecute.addEventListener('click', () => {
+      if (confirm('確定執行遷移？這會修改 Firestore 資料。\n\n建議先在 backup.html 做過完整備份再繼續。')) {
+        scan(true);
+      }
+    });
+  </script>
+</body>
+</html>
