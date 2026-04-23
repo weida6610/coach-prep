@@ -100,6 +100,7 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: 'AIzaSyBGZFWML4XFJ49HBr66aJmnQsC9TYWZpvc',
@@ -111,6 +112,7 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    const authReady = firebase.auth().signInAnonymously();
 
     const COLLECTIONS = ['students', 'sessions', 'exercises', 'schedule', 'body_data', 'prep_plans'];
     const logEl = document.getElementById('log');
@@ -145,6 +147,15 @@
       btn.disabled = true;
       clearLog();
       log(`🔄 開始備份... ${new Date().toLocaleString('zh-TW')}`);
+
+      try {
+        await authReady;
+        log(`  ✓ 匿名登入完成`);
+      } catch (e) {
+        log(`  ❌ 匿名登入失敗：${e.message}`, 'err');
+        btn.disabled = false;
+        return;
+      }
 
       const payload = {
         meta: {

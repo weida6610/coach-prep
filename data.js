@@ -27,6 +27,11 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const _fsdb = firebase.firestore();
 
+// 匿名登入：Firestore 規則要求 request.auth != null（測試模式已到期）
+const _authReady = firebase.auth().signInAnonymously()
+  .then(() => console.log('✅ 匿名登入成功'))
+  .catch(err => console.error('❌ 匿名登入失敗:', err));
+
 // 啟用離線持久化：斷網/手機沒電時仍能讀取本地快取，不會誤判為空資料庫
 _fsdb.enablePersistence({ synchronizeTabs: true }).catch(err => {
   console.warn('Firestore persistence 未啟用:', err.code);
@@ -58,6 +63,7 @@ const DB = {
   // ── 初始化：從 Firestore 載入資料，設定即時監聽 ──
   async init() {
     try {
+      await _authReady;  // 等匿名登入完成，才符合 Firestore rules
       const [studSnap, sesSnap, exSnap, schSnap, bdSnap, ppSnap] = await Promise.all([
         _fsdb.collection('students').get(),
         _fsdb.collection('sessions').get(),
