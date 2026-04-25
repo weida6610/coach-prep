@@ -264,7 +264,7 @@ function syncCalendarNow() {
   const btn = document.getElementById('btn-cal-sync');
   if (btn) { btn.style.animation = 'spin 1s linear infinite'; btn.style.pointerEvents = 'none'; }
   showToast('🔄 同步行事曆中...');
-  try { fetch(GAS_SYNC_URL, { mode: 'no-cors' }); } catch(e) {}
+  try { fetch(`${GAS_SYNC_URL}?t=${Date.now()}`, { mode: 'no-cors', cache: 'no-store' }); } catch(e) {}
   // GAS 寫入期間，Firestore onSnapshot 會陸續觸發 dashboard 自動重畫（見 data.js 的 _scheduleDashboardRefresh）
   // 12 秒後停止旋轉、提示完成（保險用，實際課表已隨 GAS 寫入陸續顯示）
   setTimeout(() => {
