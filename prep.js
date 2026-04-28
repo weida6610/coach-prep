@@ -8,6 +8,73 @@ let currentSessionState = null;
 let geminiLoading = false;
 let historyPanelCollapsed = false;
 
+// Shared planning helpers: keep multi-weight session records intact when reusing history.
+function isDbOrMachineExercise(name) {
+  const n = (name || '').toLowerCase();
+  return n.includes('db') || n.includes('dumbbell') || n.includes('啞鈴')
+    || n.includes('machine') || n.includes('機械');
+}
+
+function isNeedsWorkQuality(quality) {
+  return quality === '待加強' || quality === '需改善';
+}
+
+function progressExerciseWeight(weight, name, quality) {
+  let newWeight = weight || '';
+  if (quality === '優秀' && newWeight && newWeight !== '-') {
+    const increment = isDbOrMachineExercise(name) ? 2.5 : 5;
+    const numMatch = newWeight.match(/(\d+\.?\d*)/);
+    if (numMatch) {
+      const newVal = parseFloat(numMatch[1]) + increment;
+      const display = newVal % 1 === 0 ? String(newVal) : newVal.toFixed(1);
+      newWeight = newWeight.replace(numMatch[1], display);
+    }
+  }
+  return newWeight;
+}
+
+function getExerciseGroupsForPlanning(ex) {
+  if (typeof getSessionExerciseGroups === 'function') {
+    const groups = getSessionExerciseGroups(ex).filter(g => g.count > 0);
+    if (groups.length) return groups;
+  }
+  const weight = ex.weight && ex.weight !== '-' ? ex.weight : '';
+  return [{ weight, reps: ex.reps || '10', count: parseInt(ex.sets) || 1 }];
+}
+
+function buildPrepExerciseFromSession(ex, options = {}) {
+  const groups = getExerciseGroupsForPlanning(ex).map(g => ({
+    weight: options.progress ? progressExerciseWeight(g.weight, ex.name, ex.quality) : g.weight,
+    reps: g.reps || ex.reps || '10',
+    count: parseInt(g.count) || 1
+  }));
+  const primary = groups[0] || { weight: '', reps: ex.reps || '10', count: parseInt(ex.sets) || 1 };
+  const name = options.name || ex.name;
+  const cues = options.cues || '';
+
+  return {
+    exerciseId: ex.exerciseId || ex.id,
+    name,
+    category: ex.category || '',
+    target: ex.target || '',
+    sets: primary.count,
+    reps: primary.reps,
+    weight: primary.weight || '-',
+    cues,
+    subSets: groups.slice(1).map(g => ({
+      weight: g.weight || '',
+      reps: g.reps,
+      sets: g.count
+    }))
+  };
+}
+
+function formatExerciseGroupsForPrompt(ex) {
+  return getExerciseGroupsForPlanning(ex)
+    .map(g => `${g.weight ? g.weight + '×' : ''}${g.reps}×${g.count}組`)
+    .join(' / ');
+}
+
 // ============================================
 // Gemini AI Integration
 // ============================================
@@ -32,7 +99,17 @@ async function callGeminiAI(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
-  const recentSessions = sessions.slice(0, 5).reverse(); // Oldest to newest (up to N-4)
+  function withExerciseMeta(ex) {
+    const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
+    return {
+      ...ex,
+      category: ex.category || lib?.category || '',
+      target: ex.target || lib?.target || ''
+    };
+  }
+
+  const recentNewest = sessions.slice(0, 5);
+  const recentSessions = recentNewest.slice().reverse(); // Oldest to newest for prompt display
   let historyText = '（無歷史紀錄）';
 
   // Classify each session as Module A (上肢推+下肢拉) or B (上肢拉+下肢推)
@@ -40,7 +117,8 @@ async function callGeminiAI(studentId) {
     if (!session) return null;
     let push = 0, pull = 0;
     session.exercises.forEach(e => {
-      const cat = e.category || e.name || '';
+      const meta = withExerciseMeta(e);
+      const cat = meta.category || meta.name || '';
       if (cat.includes('推') || cat.includes('胸') || cat.includes('肩') || cat.includes('三頭')) push++;
       if (cat.includes('拉') || cat.includes('背') || cat.includes('二頭') || cat.includes('划')) pull++;
     });
@@ -49,8 +127,8 @@ async function callGeminiAI(studentId) {
     return '不明確';
   }
 
-  const sessionN2 = recentSessions[0] || null;
-  const sessionN1 = recentSessions[1] || null;
+  const sessionN1 = sessions[0] || null;
+  const sessionN2 = sessions[1] || null;
   const modN2 = classifyModule(sessionN2);
   const modN1 = classifyModule(sessionN1);
   // N should match N-2; if N-2 is A, N is A; if N-2 is B, N is B
@@ -61,16 +139,22 @@ async function callGeminiAI(studentId) {
   else if (modN1 === 'B（上肢拉＋下肢推）') targetModule = 'A（上肢推＋下肢拉）';
 
   if (recentSessions.length > 0) {
-    const labels = ['N-4', 'N-3', 'N-2（上上次）', 'N-1（上次）', 'N-0（最近）'];
-    const offset = 5 - recentSessions.length;
+    const labelsById = new Map();
+    recentNewest.forEach((s, i) => {
+      labelsById.set(s.id || `${s.studentId}-${s.date}-${i}`, i === 0 ? 'N-1（上次）' : `N-${i + 1}`);
+    });
     historyText = recentSessions.map((s, i) => {
-      const label = labels[i + offset] || `N-${recentSessions.length - 1 - i}`;
+      const key = s.id || `${s.studentId}-${s.date}-${recentNewest.indexOf(s)}`;
+      const label = labelsById.get(key) || `N-${recentSessions.length - i}`;
       return `
 ### ${label}: ${s.date} (${s.sessionType})
 - 模組分析：${classifyModule(s) || '不明確'}
 - 當日狀況：${s.conditionNotes || '無'}
 - 動作：
-${s.exercises.map(e => `  * ${e.name} | ${e.sets}組×${e.reps} | 重量:${e.weight} | 品質:${e.quality || ''} | 備註:${e.notes || ''}`).join('\n')}
+${s.exercises.map(raw => {
+  const e = withExerciseMeta(raw);
+  return `  * [${e.category || '未分類'}] ${e.name} | ${formatExerciseGroupsForPrompt(e)} | 品質:${e.quality || ''} | 備註:${e.notes || ''}`;
+}).join('\n')}
 - 教練筆記：${s.coachNotes || '無'}
 - 下堂建議：${s.nextSuggestion || '無'}`;
     }).join('\n');
@@ -280,18 +364,21 @@ function generateAISuggestions(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
 
+  function withExerciseMeta(ex) {
+    const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
+    return {
+      ...ex,
+      category: ex.category || lib?.category || '',
+      target: ex.target || lib?.target || '',
+      cues: ex.cues || lib?.cues || ''
+    };
+  }
+
   // sessions[0] = N-1（上次），sessions[1] = N-2（上上次），...
   const sessionN1 = sessions[0] || null;
   const sessionN2 = sessions[1] || null;
   const sessionN3 = sessions[2] || null;
   const sessionN4 = sessions[3] || null;
-
-  // 判斷是否為 DB/Machine 類動作（增加強度單位較小）
-  function isDbOrMachine(name) {
-    const n = (name || '').toLowerCase();
-    return n.includes('db') || n.includes('dumbbell') || n.includes('啞鈴')
-      || n.includes('machine') || n.includes('機械');
-  }
 
   // Push up（扶槓）：偵測槓數，數字越小強度越大
   function adjustPushUpBar(name, quality) {
@@ -306,21 +393,6 @@ function generateAISuggestions(studentId) {
     return null; // 維持不變
   }
 
-  // 計算加重後的重量
-  function progressWeight(weight, name, quality) {
-    let newWeight = weight || '';
-    if (quality === '優秀' && newWeight && newWeight !== '-') {
-      const increment = isDbOrMachine(name) ? 2.5 : 5;
-      const numMatch = newWeight.match(/(\d+\.?\d*)/);
-      if (numMatch) {
-        const newVal = parseFloat(numMatch[1]) + increment;
-        const display = newVal % 1 === 0 ? String(newVal) : newVal.toFixed(1);
-        newWeight = newWeight.replace(numMatch[1], display);
-      }
-    }
-    return newWeight;
-  }
-
   // 收集某個 session 的動作名稱集合
   function getExerciseNames(session) {
     if (!session) return new Set();
@@ -332,7 +404,7 @@ function generateAISuggestions(studentId) {
     if (!session) return null;
     let aScore = 0, bScore = 0;  // A = 上肢推 + 下肢拉；B = 上肢拉 + 下肢推
     session.exercises.forEach(e => {
-      const cat = e.category || '';
+      const cat = withExerciseMeta(e).category || '';
       if (cat === '上肢推' || cat === '下肢拉') aScore++;
       if (cat === '上肢拉' || cat === '下肢推') bScore++;
     });
@@ -346,21 +418,19 @@ function generateAISuggestions(studentId) {
 
   // ── 情況 1：有 N-2 → 以 N-2 為模板（N 與 N-2 同模組）──
   if (sessionN2) {
-    const plan = sessionN2.exercises.map(e => {
+    const plan = sessionN2.exercises.map(raw => {
+      const e = withExerciseMeta(raw);
       // Push up 扶槓特殊處理
       let name = e.name;
       const adjustedName = adjustPushUpBar(name, e.quality);
       if (adjustedName) name = adjustedName;
 
-      return {
-        exerciseId: e.exerciseId,
-        name: name,
-        category: e.category || '',
-        sets: e.sets || 4,
-        reps: e.reps || '10',
-        weight: progressWeight(e.weight, e.name, e.quality),
-        cues: ''
-      };
+      let cues = '';
+      if (e.quality === '優秀') cues = '上次品質優秀，已依規則微幅加強';
+      else if (isNeedsWorkQuality(e.quality)) cues = '上次品質需改善，先維持重量並注意動作品質';
+      else if ((e.notes || '').toLowerCase().includes('time out')) cues = '上次 time out，建議保留休息與節奏空間';
+
+      return buildPrepExerciseFromSession(e, { name, progress: true, cues });
     });
 
     // ── 規則 3：從 N-1 補入 N-2/N-3/N-4 都沒出現過的動作 ──
@@ -371,7 +441,7 @@ function generateAISuggestions(studentId) {
       const alreadyInPlan = new Set(plan.map(e => e.name));
 
       // 找出 N-1 中獨有的動作（N-2/N-3/N-4 都沒出現）
-      const uniqueFromN1 = sessionN1.exercises.filter(e =>
+      const uniqueFromN1 = sessionN1.exercises.map(withExerciseMeta).filter(e =>
         !namesN2.has(e.name) && !namesN3.has(e.name) && !namesN4.has(e.name)
         && !alreadyInPlan.has(e.name)
       );
@@ -379,24 +449,19 @@ function generateAISuggestions(studentId) {
       // 優先排序：time out / 需改善的排前面
       uniqueFromN1.sort((a, b) => {
         const aUrgent = (a.notes || '').toLowerCase().includes('time out')
-          || (a.quality === '待加強') ? 1 : 0;
+          || isNeedsWorkQuality(a.quality) ? 1 : 0;
         const bUrgent = (b.notes || '').toLowerCase().includes('time out')
-          || (b.quality === '待加強') ? 1 : 0;
+          || isNeedsWorkQuality(b.quality) ? 1 : 0;
         return bUrgent - aUrgent;
       });
 
       uniqueFromN1.forEach(e => {
         const isTimeout = (e.notes || '').toLowerCase().includes('time out');
-        const needsWork = e.quality === '待加強';
-        plan.push({
-          exerciseId: e.exerciseId,
-          name: e.name,
-          category: e.category || '',
-          sets: e.sets || 3,
-          reps: e.reps || '10',
-          weight: e.weight || '',
-          cues: isTimeout ? '⏱ 上次 time out，建議留意' : needsWork ? '⚠ 上次待加強' : '📌 N-1 獨有動作'
-        });
+        const needsWork = isNeedsWorkQuality(e.quality);
+        plan.push(buildPrepExerciseFromSession(e, {
+          progress: false,
+          cues: isTimeout ? '上次 time out，建議留意' : needsWork ? '上次品質需改善' : 'N-1 獨有動作'
+        }));
       });
     }
 
@@ -408,13 +473,10 @@ function generateAISuggestions(studentId) {
     // 帶入 N-1 中非主訓練的部分（暖身、核心等），主訓練改為相反模組
     const plan = [];
     // 保留 N-1 的暖身/NKT/核心動作
-    sessionN1.exercises.forEach(e => {
+    sessionN1.exercises.map(withExerciseMeta).forEach(e => {
       const cat = e.category || '';
       if (cat.includes('NKT') || cat.includes('核心') || cat.includes('暖身')) {
-        plan.push({
-          exerciseId: e.exerciseId, name: e.name, category: cat,
-          sets: e.sets || 2, reps: e.reps || '8', weight: e.weight || '-', cues: ''
-        });
+        plan.push(buildPrepExerciseFromSession(e, { progress: false }));
       }
     });
     // 主訓練：N-1 的相反模組，從動作庫挑選

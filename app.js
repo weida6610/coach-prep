@@ -264,13 +264,54 @@ function syncCalendarNow() {
   const btn = document.getElementById('btn-cal-sync');
   if (btn) { btn.style.animation = 'spin 1s linear infinite'; btn.style.pointerEvents = 'none'; }
   showToast('🔄 同步行事曆中...');
-  try { fetch(`${GAS_SYNC_URL}?t=${Date.now()}`, { mode: 'no-cors', cache: 'no-store' }); } catch(e) {}
-  // GAS 寫入期間，Firestore onSnapshot 會陸續觸發 dashboard 自動重畫（見 data.js 的 _scheduleDashboardRefresh）
-  // 12 秒後停止旋轉、提示完成（保險用，實際課表已隨 GAS 寫入陸續顯示）
-  setTimeout(() => {
+
+  const callbackName = `calendarSyncCallback_${Date.now()}`;
+  const script = document.createElement('script');
+  let done = false;
+
+  const cleanup = () => {
     if (btn) { btn.style.animation = ''; btn.style.pointerEvents = ''; }
-    showToast('✅ 同步完成');
-  }, 12000);
+    try { delete window[callbackName]; } catch(e) { window[callbackName] = undefined; }
+    script.remove();
+  };
+
+  const timer = setTimeout(() => {
+    if (done) return;
+    done = true;
+    cleanup();
+    showToast('⚠️ 同步沒有回應，請稍後再試');
+  }, 20000);
+
+  window[callbackName] = (result) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    cleanup();
+
+    if (!result || result.status !== 'ok') {
+      showToast('❌ 同步失敗，請檢查 GAS');
+      return;
+    }
+
+    renderView('dashboard');
+    if (result.unmatched && result.unmatched.length) {
+      const names = result.unmatched.slice(0, 3).map(x => x.cleanName || x.title).join('、');
+      showToast(`⚠️ ${result.unmatched.length} 筆找不到學員：${names}`);
+      return;
+    }
+    showToast(`✅ 同步完成：新增 ${result.created || 0}，更新 ${result.updated || 0}`);
+  };
+
+  script.onerror = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    cleanup();
+    showToast('❌ 同步連線失敗');
+  };
+
+  script.src = `${GAS_SYNC_URL}?callback=${encodeURIComponent(callbackName)}&t=${Date.now()}`;
+  document.body.appendChild(script);
 }
 
 function deleteScheduleItemHandler(id) {
@@ -544,6 +585,8 @@ function saveSession() {
     sessionType: determineSessionType(state.exercises),
     exercises: state.exercises.map(e => ({
       exerciseId: e.exerciseId, name: e.name,
+      category: e.category || '',
+      target: e.target || '',
       sets: (e.allSets||[]).length || e.sets,
       reps: e.reps,
       weight: e.actualWeight || e.weight,
@@ -551,6 +594,7 @@ function saveSession() {
       completed: e.completedSets,
       quality: e.quality || '未評',
       notes: e.notes,
+      cues: e.cues || '',
       subSets: e.subSets || []
     })),
     conditionNotes: state.conditions.join('、'),

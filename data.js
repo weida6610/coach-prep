@@ -2,7 +2,7 @@
 // Data Layer — Firestore + In-memory Cache
 // ============================================
 
-const GAS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw14eSL4EqXcBMENgmI3dIwdQPMqmn8dFbyRKjMEaRmQ9OQwuFsFBui-YQVoF0omzAxQw/exec';
+const GAS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbzvPNPcwRNTnVPsnxJOU3__pOGYEnw7851tV78IK-ucb0AHAvUHBJXtS4SPGiW9MGtZfw/exec';
 
 const AVATAR_COLORS = [
   'linear-gradient(135deg, #00e5a0, #00b4d8)',
