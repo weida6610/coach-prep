@@ -568,18 +568,35 @@ function renderPrepFreeItem(ex, idx, catIcons, catEmojis) {
 }
 
 // ── Body Check ──
-let _lastBodyData = null;
+let _bodyCheckBaselines = { weight: null, muscle: null, bodyFat: null };
+
+function hasBodyMetricValue(record, key) {
+  if (!record) return false;
+  const val = record[key];
+  return val !== null && val !== undefined && val !== '' && !isNaN(parseFloat(val));
+}
+
+function findLatestBodyDataWith(history, keys) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (keys.some(key => hasBodyMetricValue(history[i], key))) return history[i];
+  }
+  return null;
+}
 
 function renderBodyCheck(studentId) {
   const student = DB.getStudent(studentId);
   if (!student) return '<div class="empty-state"><div class="empty-state-icon">❌</div><div class="empty-state-title">找不到學員</div></div>';
 
   const history = DB.getBodyData(studentId);
-  _lastBodyData = history.length > 0 ? history[history.length - 1] : null;
-  const last = _lastBodyData;
+  _bodyCheckBaselines = {
+    weight: findLatestBodyDataWith(history, ['weight']),
+    muscle: findLatestBodyDataWith(history, ['muscle']),
+    bodyFat: findLatestBodyDataWith(history, ['bodyFat'])
+  };
+  const lastComposition = findLatestBodyDataWith(history, ['muscle', 'bodyFat']);
   const recent4 = history.slice(-4);
   while (recent4.length < 4) recent4.unshift(null);
-  const daysSinceLast = last ? Math.floor((new Date() - new Date(last.date)) / (1000*60*60*24)) : null;
+  const daysSinceLast = lastComposition ? Math.floor((new Date() - new Date(lastComposition.date)) / (1000*60*60*24)) : null;
   const needsMeasure = daysSinceLast !== null && daysSinceLast >= 28;
   const cellStyle = 'background:var(--bg-card);border-radius:10px;padding:10px 4px;text-align:center;min-height:86px;display:flex;flex-direction:column;justify-content:center';
 
@@ -644,17 +661,16 @@ function renderBodyCheck(studentId) {
 }
 
 window.updateBodyCheckDiff = function() {
-  const last = _lastBodyData;
-  if (!last) return;
   const fields = [
-    { inputId:'bc-weight', diffId:'bc-weight-diff', lastVal: last.weight   },
-    { inputId:'bc-muscle', diffId:'bc-muscle-diff', lastVal: last.muscle   },
-    { inputId:'bc-fat',    diffId:'bc-fat-diff',    lastVal: last.bodyFat  },
+    { inputId:'bc-weight', diffId:'bc-weight-diff', baseline: _bodyCheckBaselines.weight,  field:'weight'  },
+    { inputId:'bc-muscle', diffId:'bc-muscle-diff', baseline: _bodyCheckBaselines.muscle,  field:'muscle'  },
+    { inputId:'bc-fat',    diffId:'bc-fat-diff',    baseline: _bodyCheckBaselines.bodyFat, field:'bodyFat' },
   ];
-  fields.forEach(({ inputId, diffId, lastVal }) => {
+  fields.forEach(({ inputId, diffId, baseline, field }) => {
     const input = document.getElementById(inputId);
     const diffEl = document.getElementById(diffId);
     if (!input || !diffEl) return;
+    const lastVal = baseline ? baseline[field] : null;
     if (input.value === '' || lastVal === null || lastVal === undefined) { diffEl.innerHTML = ''; return; }
     const diff = parseFloat(input.value) - parseFloat(lastVal);
     if (isNaN(diff)) { diffEl.innerHTML = ''; return; }
