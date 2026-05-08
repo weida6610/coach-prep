@@ -583,12 +583,12 @@ ${libText}
       cues: ex.cues || '',
       isFreeStyle: true
     }));
+    const notes = document.getElementById('prep-notes')?.value || currentPrepPlan._prepNotes || '';
     currentPrepPlan = [...baseItems, ...freeItems];
     currentPrepPlan.studentId = studentId;
+    currentPrepPlan._prepNotes = notes;
 
-    // Re-render prep view
-    navigationStack.pop();
-    navigate('prep', studentId);
+    rerenderCurrentViewPreserveScroll();
     showToast('✅ AI 自由發揮項目已加入課表底部！');
     
   } catch (err) {
@@ -1299,14 +1299,19 @@ function updatePrepExercise(idx, field, val) {
   currentPrepPlan[idx][field] = field === 'sets' ? (parseInt(val) || 1) : val;
 }
 
-function rerenderCurrentViewPreserveScroll() {
+function rerenderCurrentViewPreserveScroll(scrollPosition) {
   const curr = navigationStack[navigationStack.length - 1];
   if (!curr) return;
-  const content = document.getElementById('app-content');
+  const pos = scrollPosition || (typeof getScrollPosition === 'function'
+    ? getScrollPosition()
+    : {
+      contentScrollTop: document.getElementById('app-content')?.scrollTop || 0,
+      windowScrollY: window.scrollY || window.pageYOffset || 0
+    });
   renderView(curr.view, curr.param, {
     preserveScroll: true,
-    contentScrollTop: content ? content.scrollTop : 0,
-    windowScrollY: window.scrollY || window.pageYOffset || 0
+    contentScrollTop: pos.contentScrollTop,
+    windowScrollY: pos.windowScrollY
   });
 }
 
@@ -1377,6 +1382,7 @@ function showSessionAddExercise() {
 function addLibExerciseToSession(exerciseId) {
   const ex = DB.getExercises().find(e => e.id === exerciseId);
   if (!ex || !currentSessionState) return;
+  const scrollPosition = typeof getScrollPosition === 'function' ? getScrollPosition() : null;
   const allSets = Array.from({ length: ex.defaultSets }, () => ({ reps: ex.defaultReps, weight: '' }));
   const newEx = {
     exerciseId: ex.id, name: ex.name, category: ex.category,
@@ -1389,7 +1395,7 @@ function addLibExerciseToSession(exerciseId) {
   currentSessionState.exercises.splice(insertAt, 0, newEx);
   closeModal();
   showToast(`✅ 已加入 ${ex.name}`);
-  renderView('session', currentSessionState.studentId);
+  renderView('session', currentSessionState.studentId, { preserveScroll: true, ...(scrollPosition || {}) });
 }
 
 function renderAddStudent(studentId) {
@@ -1570,10 +1576,11 @@ function _onPrepTouchEnd(e) {
 // ── Session exercise edit (per-set) ──
 let _editSets = [];
 
-function _renderEditSetsModal(exName) {
+function _renderEditSetsModal(exName, modalScrollTop = null) {
   const inputStyle = 'background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:7px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;width:100%;box-sizing:border-box';
   const canRemove = _editSets.length > 1;
-  document.getElementById('modal-content').innerHTML = `
+  const modalContent = document.getElementById('modal-content');
+  modalContent.innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">✏️ ${exName}</div></div>
     <div style="padding:0 16px 8px">
@@ -1598,6 +1605,9 @@ function _renderEditSetsModal(exName) {
       <button class="btn-primary accent" onclick="applyEditSessionExercise()">✅ 套用</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
+  if (modalScrollTop !== null) {
+    requestAnimationFrame(() => { modalContent.scrollTop = modalScrollTop; });
+  }
 }
 
 window.showEditSessionExercise = function() {
@@ -1611,21 +1621,21 @@ window._addEditSet = function() {
   const last = _editSets[_editSets.length - 1] || { weight: '', reps: '10' };
   _editSets.push({ weight: last.weight, reps: last.reps });
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  _renderEditSetsModal(ex.name);
+  _renderEditSetsModal(ex.name, document.getElementById('modal-content')?.scrollTop || 0);
 };
 
 window._removeLastEditSet = function() {
   if (_editSets.length <= 1) return;
   _editSets.pop();
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  _renderEditSetsModal(ex.name);
+  _renderEditSetsModal(ex.name, document.getElementById('modal-content')?.scrollTop || 0);
 };
 
 window._removeEditSet = function(i) {
   if (_editSets.length <= 1) return;
   _editSets.splice(i, 1);
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
-  _renderEditSetsModal(ex.name);
+  _renderEditSetsModal(ex.name, document.getElementById('modal-content')?.scrollTop || 0);
 };
 
 window.deleteCurrentSessionExercise = function() {
@@ -1642,7 +1652,7 @@ window.deleteCurrentSessionExercise = function() {
   if (state.currentExIdx >= state.exercises.length) {
     state.currentExIdx = state.exercises.length - 1;
   }
-  renderView('session', state.studentId);
+  renderView('session', state.studentId, { preserveScroll: true });
 };
 
 window.applyEditSessionExercise = function() {
@@ -1651,6 +1661,7 @@ window.applyEditSessionExercise = function() {
   ex.completedSets = new Array(ex.allSets.length).fill(false);
   ex.reps = ex.allSets[0]?.reps || ex.reps;
   ex.weight = ex.allSets[0]?.weight || '-';
+  const scrollPosition = typeof getScrollPosition === 'function' ? getScrollPosition() : null;
   closeModal();
-  renderView('session', currentSessionState.studentId);
+  renderView('session', currentSessionState.studentId, { preserveScroll: true, ...(scrollPosition || {}) });
 };

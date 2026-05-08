@@ -26,6 +26,35 @@ function showToast(msg) {
   setTimeout(() => el.classList.remove('show'), 2500);
 }
 
+function getScrollPosition() {
+  const content = document.getElementById('app-content');
+  return {
+    contentScrollTop: content ? content.scrollTop : 0,
+    windowScrollY: window.scrollY || window.pageYOffset || 0
+  };
+}
+
+function restoreScrollPosition(position) {
+  const pos = position || getScrollPosition();
+  const content = document.getElementById('app-content');
+  const html = document.documentElement;
+  const previousBehavior = html.style.scrollBehavior;
+  html.style.scrollBehavior = 'auto';
+
+  const apply = () => {
+    if (content) content.scrollTop = pos.contentScrollTop || 0;
+    window.scrollTo(0, pos.windowScrollY || 0);
+  };
+
+  apply();
+  requestAnimationFrame(apply);
+  setTimeout(apply, 0);
+  setTimeout(() => {
+    apply();
+    html.style.scrollBehavior = previousBehavior;
+  }, 80);
+}
+
 // ============================================
 // Navigation / Router
 // ============================================
@@ -48,8 +77,10 @@ function renderView(view, param, options = {}) {
   const actionBtn = document.getElementById('btn-header-action');
   const nav = document.getElementById('bottom-nav');
   const preserveScroll = !!options.preserveScroll;
-  const previousContentScroll = options.contentScrollTop ?? content.scrollTop;
-  const previousWindowScroll = options.windowScrollY ?? (window.scrollY || window.pageYOffset || 0);
+  const previousScroll = {
+    contentScrollTop: options.contentScrollTop ?? content.scrollTop,
+    windowScrollY: options.windowScrollY ?? (window.scrollY || window.pageYOffset || 0)
+  };
 
   // Clear timer / auto-save if leaving session
   if (view !== 'session') {
@@ -168,10 +199,7 @@ function renderView(view, param, options = {}) {
   }
 
   if (preserveScroll) {
-    requestAnimationFrame(() => {
-      content.scrollTop = previousContentScroll;
-      window.scrollTo(0, previousWindowScroll);
-    });
+    restoreScrollPosition(previousScroll);
   } else {
     content.scrollTop = 0;
     window.scrollTo(0, 0);
@@ -453,13 +481,13 @@ function showInlineNewExercise(studentId) {
     </div>`;
 }
 
-function refreshPrepAfterAdd(studentId) {
+function refreshPrepAfterAdd(studentId, scrollPosition = getScrollPosition()) {
   const notes = document.getElementById('prep-notes')?.value || '';
   if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
   if (typeof rerenderCurrentViewPreserveScroll === 'function') {
-    rerenderCurrentViewPreserveScroll();
+    rerenderCurrentViewPreserveScroll(scrollPosition);
   } else {
-    renderView('prep', studentId, { preserveScroll: true });
+    renderView('prep', studentId, { preserveScroll: true, ...scrollPosition });
   }
 }
 
@@ -478,9 +506,10 @@ window.saveInlineNewExercise = function(studentId) {
     exerciseId: ex.id, name: ex.name, category: ex.category,
     sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', cues: ex.cues || ''
   });
+  const scrollPosition = getScrollPosition();
   closeModal();
   showToast(`✅ 「${ex.name}」已加入資料庫與課表`);
-  refreshPrepAfterAdd(studentId);
+  refreshPrepAfterAdd(studentId, scrollPosition);
 };
 
 function filterModalExercises(query) {
@@ -496,9 +525,10 @@ function addExerciseToPrep(exerciseId, studentId) {
       exerciseId: ex.id, name: ex.name, category: ex.category,
       sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', cues: ex.cues || ''
     });
+    const scrollPosition = getScrollPosition();
     closeModal();
     showToast(`✅ 已加入 ${ex.name}`);
-    refreshPrepAfterAdd(studentId);
+    refreshPrepAfterAdd(studentId, scrollPosition);
   }
 }
 
