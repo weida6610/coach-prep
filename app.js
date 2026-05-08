@@ -488,6 +488,7 @@ function addExerciseToPrep(exerciseId, studentId) {
 function startSession(studentId) {
   const notes = document.getElementById('prep-notes')?.value || '';
   if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
+  if (typeof learnPlanningPreferences === 'function') learnPlanningPreferences(studentId);
   currentSessionState = null;
   navigate('body-check', studentId);
 }

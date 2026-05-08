@@ -75,6 +75,112 @@ function formatExerciseGroupsForPrompt(ex) {
     .join(' / ');
 }
 
+function normalizeExerciseName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function getPlanningPrefs(student) {
+  const prefs = student?.planningPrefs || {};
+  return {
+    prefer: prefs.prefer || {},
+    avoid: prefs.avoid || {},
+    updatedAt: prefs.updatedAt || null
+  };
+}
+
+function preferenceDelta(name, prefs) {
+  const key = normalizeExerciseName(name);
+  return (prefs.prefer[key] || 0) - (prefs.avoid[key] || 0);
+}
+
+function exercisePreferenceScore(ex, prefs) {
+  const delta = preferenceDelta(ex.name, prefs);
+  if (delta === 0) return 0;
+  return delta > 0 ? Math.min(delta, 4) : Math.max(delta, -4);
+}
+
+function findPreferredReplacement(ex, plan, exerciseLib, prefs) {
+  const used = new Set(plan.map(item => normalizeExerciseName(item.name)));
+  return exerciseLib
+    .filter(item => item.category === ex.category && !used.has(normalizeExerciseName(item.name)))
+    .map(item => ({ item, score: exercisePreferenceScore(item, prefs) }))
+    .filter(row => row.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.item || null;
+}
+
+function applyPlanningPreferences(plan, student, exerciseLib) {
+  const prefs = getPlanningPrefs(student);
+  const adjusted = plan.map(ex => ({ ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] }));
+
+  adjusted.forEach((ex, idx) => {
+    const score = exercisePreferenceScore(ex, prefs);
+    if (score <= -2) {
+      const replacement = findPreferredReplacement(ex, adjusted, exerciseLib, prefs);
+      if (replacement) {
+        adjusted[idx] = {
+          exerciseId: replacement.id,
+          name: replacement.name,
+          category: replacement.category,
+          target: replacement.target || '',
+          sets: ex.sets || replacement.defaultSets || 4,
+          reps: ex.reps || replacement.defaultReps || '10',
+          weight: ex.weight || '',
+          cues: '依過去編修偏好替換',
+          subSets: ex.subSets || []
+        };
+      } else {
+        ex.cues = ex.cues ? `${ex.cues}；過去常被刪除，請確認是否保留` : '過去常被刪除，請確認是否保留';
+      }
+    } else if (score >= 2 && !ex.cues) {
+      ex.cues = '過去常保留/新增';
+    }
+  });
+
+  return adjusted;
+}
+
+function setPrepBaseline(plan) {
+  if (!plan) return plan;
+  plan._baselineNames = plan.filter(ex => !ex.isFreeStyle).map(ex => ex.name);
+  return plan;
+}
+
+function learnPlanningPreferences(studentId) {
+  const student = DB.getStudent(studentId);
+  if (!student || !currentPrepPlan?._baselineNames) return { added: 0, removed: 0 };
+
+  const baseline = new Set(currentPrepPlan._baselineNames.map(normalizeExerciseName));
+  const finalNames = currentPrepPlan.filter(ex => !ex.isFreeStyle).map(ex => ex.name);
+  const finalSet = new Set(finalNames.map(normalizeExerciseName));
+  const prefs = getPlanningPrefs(student);
+  let added = 0;
+  let removed = 0;
+
+  finalNames.forEach(name => {
+    const key = normalizeExerciseName(name);
+    if (!baseline.has(key)) {
+      prefs.prefer[key] = (prefs.prefer[key] || 0) + 1;
+      added++;
+    }
+  });
+
+  currentPrepPlan._baselineNames.forEach(name => {
+    const key = normalizeExerciseName(name);
+    if (!finalSet.has(key)) {
+      prefs.avoid[key] = (prefs.avoid[key] || 0) + 1;
+      removed++;
+    }
+  });
+
+  if (added || removed) {
+    const updated = { ...student, planningPrefs: { ...prefs, updatedAt: Date.now() } };
+    DB.saveStudent(updated);
+    setPrepBaseline(currentPrepPlan);
+  }
+
+  return { added, removed };
+}
+
 // ============================================
 // Gemini AI Integration
 // ============================================
@@ -465,7 +571,7 @@ function generateAISuggestions(studentId) {
       });
     }
 
-    return plan;
+    return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
   }
 
   // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
@@ -489,7 +595,7 @@ function generateAISuggestions(studentId) {
         plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
       });
     });
-    return plan;
+    return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
   }
 
   // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
@@ -508,7 +614,7 @@ function generateAISuggestions(studentId) {
       });
     });
   });
-  return plan;
+  return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
 }
 
 // ── Prep exercise row helpers ──
@@ -713,12 +819,16 @@ function renderPrep(studentId) {
 
   const sessions = DB.getSessions(studentId);
   const lastSession = sessions[0];
+  const planningPrefs = getPlanningPrefs(student);
+  const learnedPreferCount = Object.values(planningPrefs.prefer).reduce((sum, n) => sum + n, 0);
+  const learnedAvoidCount = Object.values(planningPrefs.avoid).reduce((sum, n) => sum + n, 0);
 
   if (!currentPrepPlan || currentPrepPlan.studentId !== studentId) {
     const saved = DB.getPrepPlan(studentId);
     if (saved && saved.exercises && saved.exercises.length) {
       currentPrepPlan = saved.exercises;
       currentPrepPlan._prepNotes = saved.notes || '';
+      setPrepBaseline(currentPrepPlan);
     } else {
       currentPrepPlan = generateAISuggestions(studentId);
     }
@@ -736,6 +846,10 @@ function renderPrep(studentId) {
         <div class="student-meta">第 ${student.totalSessions + 1} 堂 · ${student.goals}</div>
       </div>
     </div>
+    ${(learnedPreferCount || learnedAvoidCount) ? `
+    <div class="fade-in" style="margin:0 16px 10px;padding:8px 12px;border:1px solid rgba(0,229,160,0.28);border-radius:10px;background:rgba(0,229,160,0.08);font-size:0.76rem;color:var(--text-secondary)">
+      已學習排課偏好：常保留/新增 ${learnedPreferCount} 次，常刪除 ${learnedAvoidCount} 次
+    </div>` : ''}
     ${lastSession ? `
     <div class="prep-section fade-in stagger-1">
       <div class="prep-section-title">📌 上次重點筆記 <span class="text-muted" style="font-size:0.7rem">${formatDate(lastSession.date)}</span></div>
@@ -979,6 +1093,7 @@ function updateSubSet(idx, subIdx, field, val) {
 function savePrepPlan(studentId) {
   const notes = document.getElementById('prep-notes')?.value || '';
   currentPrepPlan._prepNotes = notes;
+  const learned = learnPlanningPreferences(studentId);
   DB.savePrepPlan(studentId, { exercises: currentPrepPlan.map(e => ({...e})), notes });
 
   // 在今日排程項目上記錄備課時間戳
@@ -991,7 +1106,8 @@ function savePrepPlan(studentId) {
     DB.saveScheduleItem(item);
   }
 
-  showToast('✅ 備課已儲存');
+  const learnText = learned.added || learned.removed ? ` · 已學習 +${learned.added}/-${learned.removed}` : '';
+  showToast(`✅ 備課已儲存${learnText}`);
 }
 
 function showSessionAddExercise() {

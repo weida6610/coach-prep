@@ -1,4 +1,4 @@
-const CACHE_NAME = 'coach-prep-v48';
+const CACHE_NAME = 'coach-prep-v49';
 const ASSETS = [
   '/coach-prep/index.html',
   '/coach-prep/style.css',
