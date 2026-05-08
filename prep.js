@@ -184,6 +184,38 @@ function cleanCompensationPart(text) {
     .trim();
 }
 
+function escapeHtmlAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function compensationFindingKey(finding) {
+  const compensator = cleanCompensationPart(finding?.compensator).replace(/\s+/g, '');
+  const inhibited = cleanCompensationPart(finding?.inhibited).replace(/\s+/g, '');
+  return `${compensator}->${inhibited}`.toLowerCase();
+}
+
+function isCompensationResolved(ex, key) {
+  return Array.isArray(ex?.resolvedCompensations) && ex.resolvedCompensations.includes(key);
+}
+
+function removeResolvedCompensationCues(finding) {
+  if (!finding || !Array.isArray(currentPrepPlan)) return;
+  const staleCues = [
+    `${finding.inhibited}曾被抑制，優先喚醒並確認發力`,
+    `${finding.compensator}曾代償，留意不要搶工作`
+  ];
+  currentPrepPlan.forEach(ex => {
+    if (!ex.cues) return;
+    const cues = String(ex.cues).split('；').map(c => c.trim()).filter(Boolean);
+    ex.cues = cues.filter(cue => !staleCues.includes(cue)).join('；');
+  });
+}
+
 function parseCompensationNotes(notes) {
   const text = String(notes || '').replace(/\n/g, ' ');
   const findings = [];
@@ -192,18 +224,26 @@ function parseCompensationNotes(notes) {
   while ((match = re.exec(text)) !== null) {
     const compensator = cleanCompensationPart(match[1]);
     const inhibited = cleanCompensationPart(match[2]);
-    if (compensator && inhibited) findings.push({ compensator, inhibited });
+    if (compensator && inhibited) {
+      const finding = { compensator, inhibited };
+      findings.push({ ...finding, key: compensationFindingKey(finding) });
+    }
   }
   return findings;
 }
 
-function collectCompensationFindings(sessions, limit = 5) {
+function collectCompensationFindings(sessions, limit = 5, options = {}) {
   const rows = [];
   sessions.slice(0, limit).forEach(session => {
-    (session.exercises || []).forEach(ex => {
+    (session.exercises || []).forEach((ex, exerciseIndex) => {
       parseCompensationNotes(ex.notes).forEach(finding => {
+        const resolved = isCompensationResolved(ex, finding.key);
+        if (resolved && !options.includeResolved) return;
         rows.push({
           ...finding,
+          resolved,
+          sessionId: session.id || '',
+          exerciseIndex,
           date: session.date || '',
           exerciseName: ex.name || ''
         });
@@ -268,6 +308,28 @@ function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings)
     )
   ));
 }
+
+window.resolveCompensationFindingFromButton = function(btn) {
+  const sessionId = btn?.dataset?.sessionId;
+  const exerciseIndex = parseInt(btn?.dataset?.exerciseIndex, 10);
+  const key = btn?.dataset?.findingKey;
+  if (!sessionId || Number.isNaN(exerciseIndex) || !key) return;
+
+  const session = DB.getSession(sessionId);
+  const ex = session?.exercises?.[exerciseIndex];
+  if (!session || !ex) {
+    showToast('找不到原始代償紀錄');
+    return;
+  }
+
+  if (!Array.isArray(ex.resolvedCompensations)) ex.resolvedCompensations = [];
+  if (!ex.resolvedCompensations.includes(key)) ex.resolvedCompensations.push(key);
+  const finding = parseCompensationNotes(ex.notes).find(item => item.key === key);
+  removeResolvedCompensationCues(finding);
+  DB.saveSession(session);
+  showToast('✅ 已標記代償處理完畢');
+  rerenderCurrentViewPreserveScroll();
+};
 
 function learnPlanningPreferences(studentId) {
   const student = DB.getStudent(studentId);
@@ -1000,8 +1062,20 @@ function renderPrep(studentId) {
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
         ${compensationFindings.slice(0, 5).map(f => `
           <div style="padding:8px 10px;border-radius:8px;background:var(--bg-card);border:1px solid var(--border);font-size:0.76rem;color:var(--text-secondary);line-height:1.45">
-            <span style="color:var(--text-muted)">${(f.date || '').slice(5) || '--'}｜${f.exerciseName || '動作'}</span><br>
-            <strong style="color:var(--danger)">${f.compensator}</strong> 代償 <strong style="color:var(--accent)">${f.inhibited}</strong>
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+              <div style="min-width:0">
+                <span style="color:var(--text-muted)">${(f.date || '').slice(5) || '--'}｜${f.exerciseName || '動作'}</span><br>
+                <strong style="color:var(--danger)">${f.compensator}</strong> 代償 <strong style="color:var(--accent)">${f.inhibited}</strong>
+              </div>
+              <button type="button"
+                data-session-id="${escapeHtmlAttr(f.sessionId)}"
+                data-exercise-index="${f.exerciseIndex}"
+                data-finding-key="${escapeHtmlAttr(f.key)}"
+                onclick="resolveCompensationFindingFromButton(this)"
+                style="flex:0 0 auto;border:1px solid rgba(0,229,160,0.35);background:rgba(0,229,160,0.1);color:var(--accent);border-radius:6px;padding:4px 7px;font-size:0.68rem;font-weight:700;cursor:pointer">
+                處理完畢
+              </button>
+            </div>
           </div>`).join('')}
       </div>
     </div>` : ''}
