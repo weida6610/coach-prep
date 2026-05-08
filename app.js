@@ -41,12 +41,15 @@ function goBack() {
   else navigate('dashboard');
 }
 
-function renderView(view, param) {
+function renderView(view, param, options = {}) {
   const content = document.getElementById('app-content');
   const backBtn = document.getElementById('btn-back');
   const title = document.getElementById('header-title');
   const actionBtn = document.getElementById('btn-header-action');
   const nav = document.getElementById('bottom-nav');
+  const preserveScroll = !!options.preserveScroll;
+  const previousContentScroll = options.contentScrollTop ?? content.scrollTop;
+  const previousWindowScroll = options.windowScrollY ?? (window.scrollY || window.pageYOffset || 0);
 
   // Clear timer / auto-save if leaving session
   if (view !== 'session') {
@@ -164,9 +167,15 @@ function renderView(view, param) {
       content.innerHTML = renderDashboard();
   }
 
-  // Scroll to top
-  content.scrollTop = 0;
-  window.scrollTo(0, 0);
+  if (preserveScroll) {
+    requestAnimationFrame(() => {
+      content.scrollTop = previousContentScroll;
+      window.scrollTo(0, previousWindowScroll);
+    });
+  } else {
+    content.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
 }
 
 // ============================================
@@ -383,8 +392,12 @@ function deleteExerciseHandler(id, event) {
 // ============================================
 function removePrepExercise(idx) {
   currentPrepPlan.splice(idx, 1);
+  if (typeof rerenderCurrentViewPreserveScroll === 'function') {
+    rerenderCurrentViewPreserveScroll();
+    return;
+  }
   const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
+  renderView(curr.view, curr.param, { preserveScroll: true });
 }
 
 function showExercisePicker(studentId) {

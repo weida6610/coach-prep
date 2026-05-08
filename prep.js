@@ -7,6 +7,7 @@ let currentPrepPlan = [];
 let currentSessionState = null;
 let geminiLoading = false;
 let historyPanelCollapsed = false;
+const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 
 // Shared planning helpers: keep multi-weight session records intact when reusing history.
 function isDbOrMachineExercise(name) {
@@ -84,6 +85,7 @@ function getPlanningPrefs(student) {
   return {
     prefer: prefs.prefer || {},
     avoid: prefs.avoid || {},
+    tuning: prefs.tuning || {},
     updatedAt: prefs.updatedAt || null
   };
 }
@@ -113,6 +115,15 @@ function applyPlanningPreferences(plan, student, exerciseLib) {
   const adjusted = plan.map(ex => ({ ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] }));
 
   adjusted.forEach((ex, idx) => {
+    const key = normalizeExerciseName(ex.name);
+    const tuning = prefs.tuning[key];
+    if (tuning) {
+      if (tuning.sets !== undefined) ex.sets = tuning.sets;
+      if (tuning.reps !== undefined) ex.reps = tuning.reps;
+      if (tuning.cues !== undefined && tuning.cues) ex.cues = tuning.cues;
+      if (Array.isArray(tuning.subSets)) ex.subSets = tuning.subSets.map(ss => ({ ...ss }));
+    }
+
     const score = exercisePreferenceScore(ex, prefs);
     if (score <= -2) {
       const replacement = findPreferredReplacement(ex, adjusted, exerciseLib, prefs);
@@ -139,9 +150,30 @@ function applyPlanningPreferences(plan, student, exerciseLib) {
   return adjusted;
 }
 
+function snapshotPrepExercise(ex) {
+  return {
+    sets: parseInt(ex.sets) || 1,
+    reps: String(ex.reps || ''),
+    cues: String(ex.cues || ''),
+    subSets: (ex.subSets || []).map(ss => ({
+      sets: parseInt(ss.sets) || 1,
+      reps: String(ss.reps || ''),
+      weight: String(ss.weight || '')
+    }))
+  };
+}
+
+function prepSnapshotChanged(a, b) {
+  return JSON.stringify(a || {}) !== JSON.stringify(b || {});
+}
+
 function setPrepBaseline(plan) {
   if (!plan) return plan;
   plan._baselineNames = plan.filter(ex => !ex.isFreeStyle).map(ex => ex.name);
+  plan._baselineItems = {};
+  plan.filter(ex => !ex.isFreeStyle).forEach(ex => {
+    plan._baselineItems[normalizeExerciseName(ex.name)] = snapshotPrepExercise(ex);
+  });
   return plan;
 }
 
@@ -218,6 +250,25 @@ function applyCompensationFindings(plan, findings) {
   });
 }
 
+function compactGeneratedPlan(plan) {
+  const seen = new Set();
+  return plan.filter(ex => {
+    const key = normalizeExerciseName(ex.name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings) {
+  return setPrepBaseline(compactGeneratedPlan(
+    applyCompensationFindings(
+      applyPlanningPreferences(plan, student, exerciseLib),
+      compensationFindings
+    )
+  ));
+}
+
 function learnPlanningPreferences(studentId) {
   const student = DB.getStudent(studentId);
   if (!student || !currentPrepPlan?._baselineNames) return { added: 0, removed: 0 };
@@ -228,12 +279,24 @@ function learnPlanningPreferences(studentId) {
   const prefs = getPlanningPrefs(student);
   let added = 0;
   let removed = 0;
+  let tuned = 0;
 
   finalNames.forEach(name => {
     const key = normalizeExerciseName(name);
     if (!baseline.has(key)) {
       prefs.prefer[key] = (prefs.prefer[key] || 0) + 1;
       added++;
+    }
+  });
+
+  currentPrepPlan.filter(ex => !ex.isFreeStyle).forEach(ex => {
+    const key = normalizeExerciseName(ex.name);
+    const baseline = currentPrepPlan._baselineItems?.[key];
+    if (!baseline) return;
+    const snapshot = snapshotPrepExercise(ex);
+    if (prepSnapshotChanged(snapshot, baseline)) {
+      prefs.tuning[key] = { ...snapshot, updatedAt: Date.now() };
+      tuned++;
     }
   });
 
@@ -245,13 +308,13 @@ function learnPlanningPreferences(studentId) {
     }
   });
 
-  if (added || removed) {
+  if (added || removed || tuned) {
     const updated = { ...student, planningPrefs: { ...prefs, updatedAt: Date.now() } };
     DB.saveStudent(updated);
     setPrepBaseline(currentPrepPlan);
   }
 
-  return { added, removed };
+  return { added, removed, tuned };
 }
 
 // ============================================
@@ -641,7 +704,7 @@ function generateAISuggestions(studentId) {
         return bUrgent - aUrgent;
       });
 
-      uniqueFromN1.forEach(e => {
+      uniqueFromN1.slice(0, MAX_UNIQUE_CARRYOVER_EXERCISES).forEach(e => {
         const isTimeout = (e.notes || '').toLowerCase().includes('time out');
         const needsWork = isNeedsWorkQuality(e.quality);
         plan.push(buildPrepExerciseFromSession(e, {
@@ -651,7 +714,7 @@ function generateAISuggestions(studentId) {
       });
     }
 
-    return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
+    return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
   }
 
   // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
@@ -675,7 +738,7 @@ function generateAISuggestions(studentId) {
         plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
       });
     });
-    return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
+    return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
   }
 
   // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
@@ -694,7 +757,7 @@ function generateAISuggestions(studentId) {
       });
     });
   });
-  return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
+  return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
 }
 
 // ── Prep exercise row helpers ──
@@ -888,8 +951,7 @@ window.saveBodyCheckAndStart = function(studentId) {
 window.adoptFreeItem = function(idx) {
   if (!currentPrepPlan[idx]) return;
   currentPrepPlan[idx].isFreeStyle = false;
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
+  rerenderCurrentViewPreserveScroll();
   showToast('✅ 已加入正式課表');
 };
 
@@ -903,6 +965,7 @@ function renderPrep(studentId) {
   const planningPrefs = getPlanningPrefs(student);
   const learnedPreferCount = Object.values(planningPrefs.prefer).reduce((sum, n) => sum + n, 0);
   const learnedAvoidCount = Object.values(planningPrefs.avoid).reduce((sum, n) => sum + n, 0);
+  const learnedTuningCount = Object.keys(planningPrefs.tuning).length;
 
   if (!currentPrepPlan || currentPrepPlan.studentId !== studentId) {
     const saved = DB.getPrepPlan(studentId);
@@ -927,9 +990,9 @@ function renderPrep(studentId) {
         <div class="student-meta">第 ${student.totalSessions + 1} 堂 · ${student.goals}</div>
       </div>
     </div>
-    ${(learnedPreferCount || learnedAvoidCount) ? `
+    ${(learnedPreferCount || learnedAvoidCount || learnedTuningCount) ? `
     <div class="fade-in" style="margin:0 16px 10px;padding:8px 12px;border:1px solid rgba(0,229,160,0.28);border-radius:10px;background:rgba(0,229,160,0.08);font-size:0.76rem;color:var(--text-secondary)">
-      已學習排課偏好：常保留/新增 ${learnedPreferCount} 次，常刪除 ${learnedAvoidCount} 次
+      已學習排課偏好：常保留/新增 ${learnedPreferCount} 次，常刪除 ${learnedAvoidCount} 次，內容微調 ${learnedTuningCount} 個動作
     </div>` : ''}
     ${compensationFindings.length ? `
     <div class="prep-section fade-in stagger-1">
@@ -1162,19 +1225,28 @@ function updatePrepExercise(idx, field, val) {
   currentPrepPlan[idx][field] = field === 'sets' ? (parseInt(val) || 1) : val;
 }
 
+function rerenderCurrentViewPreserveScroll() {
+  const curr = navigationStack[navigationStack.length - 1];
+  if (!curr) return;
+  const content = document.getElementById('app-content');
+  renderView(curr.view, curr.param, {
+    preserveScroll: true,
+    contentScrollTop: content ? content.scrollTop : 0,
+    windowScrollY: window.scrollY || window.pageYOffset || 0
+  });
+}
+
 function addSubSet(idx) {
   if (!currentPrepPlan[idx]) return;
   if (!currentPrepPlan[idx].subSets) currentPrepPlan[idx].subSets = [];
   const ex = currentPrepPlan[idx];
   currentPrepPlan[idx].subSets.push({ weight: '', reps: ex.reps, sets: parseInt(ex.sets) || 1 });
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
+  rerenderCurrentViewPreserveScroll();
 }
 
 function removeSubSet(idx, subIdx) {
   currentPrepPlan[idx]?.subSets?.splice(subIdx, 1);
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
+  rerenderCurrentViewPreserveScroll();
 }
 
 function updateSubSet(idx, subIdx, field, val) {
@@ -1198,7 +1270,7 @@ function savePrepPlan(studentId) {
     DB.saveScheduleItem(item);
   }
 
-  const learnText = learned.added || learned.removed ? ` · 已學習 +${learned.added}/-${learned.removed}` : '';
+  const learnText = learned.added || learned.removed || learned.tuned ? ` · 已學習 +${learned.added}/-${learned.removed}/調${learned.tuned}` : '';
   showToast(`✅ 備課已儲存${learnText}`);
 }
 
@@ -1368,8 +1440,7 @@ window.prepDrop = function(e, targetIdx) {
   currentPrepPlan.splice(targetIdx, 0, moved);
   _prepDragIdx = null;
   document.querySelectorAll('[id^="prep-ex-"]').forEach(el => { el.style.borderTop = ''; el.style.opacity = ''; });
-  const curr = navigationStack[navigationStack.length - 1];
-  renderView(curr.view, curr.param);
+  rerenderCurrentViewPreserveScroll();
 };
 
 // ── Touch drag for mobile ──
@@ -1417,8 +1488,7 @@ function _onPrepTouchEnd(e) {
   if (targetIdx !== null && targetIdx !== _tdIdx) {
     const moved = currentPrepPlan.splice(_tdIdx, 1)[0];
     currentPrepPlan.splice(targetIdx, 0, moved);
-    const curr = navigationStack[navigationStack.length - 1];
-    renderView(curr.view, curr.param);
+    rerenderCurrentViewPreserveScroll();
   }
   _tdIdx = null;
 }
