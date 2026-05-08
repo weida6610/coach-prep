@@ -145,6 +145,79 @@ function setPrepBaseline(plan) {
   return plan;
 }
 
+function cleanCompensationPart(text) {
+  return String(text || '')
+    .replace(/^[\s:：,，;；、]+|[\s:：,，;；、]+$/g, '')
+    .replace(/^(者|代償者|被抑制者|抑制者)\s*[:：]?\s*/g, '')
+    .trim();
+}
+
+function parseCompensationNotes(notes) {
+  const text = String(notes || '').replace(/\n/g, ' ');
+  const findings = [];
+  const re = /([^,，;；。／/]{1,40}?)\s*代償\s*([^,，;；。／/]{1,40})/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const compensator = cleanCompensationPart(match[1]);
+    const inhibited = cleanCompensationPart(match[2]);
+    if (compensator && inhibited) findings.push({ compensator, inhibited });
+  }
+  return findings;
+}
+
+function collectCompensationFindings(sessions, limit = 5) {
+  const rows = [];
+  sessions.slice(0, limit).forEach(session => {
+    (session.exercises || []).forEach(ex => {
+      parseCompensationNotes(ex.notes).forEach(finding => {
+        rows.push({
+          ...finding,
+          date: session.date || '',
+          exerciseName: ex.name || ''
+        });
+      });
+    });
+  });
+  return rows;
+}
+
+function formatCompensationFindings(findings) {
+  if (!findings || !findings.length) return '無明確代償紀錄';
+  return findings.slice(0, 8)
+    .map(f => `- ${f.date || '未註明日期'}｜${f.exerciseName || '未註明動作'}：${f.compensator} 代償 ${f.inhibited}`)
+    .join('\n');
+}
+
+function appendCue(ex, cue) {
+  if (!cue) return ex;
+  if (ex.cues && ex.cues.includes(cue)) return ex;
+  ex.cues = ex.cues ? `${ex.cues}；${cue}` : cue;
+  return ex;
+}
+
+function muscleMentioned(ex, muscle) {
+  const haystack = `${ex.name || ''} ${ex.target || ''} ${ex.cues || ''}`.toLowerCase();
+  const needle = String(muscle || '').toLowerCase().replace(/\s+/g, '');
+  if (!needle) return false;
+  return haystack.replace(/\s+/g, '').includes(needle);
+}
+
+function applyCompensationFindings(plan, findings) {
+  if (!findings || !findings.length) return plan;
+  return plan.map(ex => {
+    const next = { ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] };
+    findings.slice(0, 8).forEach(f => {
+      if (muscleMentioned(next, f.inhibited)) {
+        appendCue(next, `${f.inhibited}曾被抑制，優先喚醒並確認發力`);
+      }
+      if (muscleMentioned(next, f.compensator)) {
+        appendCue(next, `${f.compensator}曾代償，留意不要搶工作`);
+      }
+    });
+    return next;
+  });
+}
+
 function learnPlanningPreferences(studentId) {
   const student = DB.getStudent(studentId);
   if (!student || !currentPrepPlan?._baselineNames) return { added: 0, removed: 0 };
@@ -204,6 +277,7 @@ async function callGeminiAI(studentId) {
   const student = DB.getStudent(studentId);
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
+  const compensationFindings = collectCompensationFindings(sessions, 5);
 
   function withExerciseMeta(ex) {
     const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
@@ -282,6 +356,10 @@ ${s.exercises.map(raw => {
 ## 過去上課紀錄（由舊到新）
 ${historyText}
 
+## 最近代償紀錄（從每個動作備註解析）
+格式說明：「A 代償 B」代表 A 是代償者，B 是被抑制者。
+${formatCompensationFindings(compensationFindings)}
+
 ## 課表模組輪替規則（重要）
 - **模組 A**：上肢推（胸大肌、三角肌、三頭肌）＋ 下肢拉（臀大肌、腿後側）
 - **模組 B**：上肢拉（背闊肌、菱形肌、二頭肌）＋ 下肢推（股四頭肌、臀肌）
@@ -302,7 +380,8 @@ ${libText}
 1. 必須符合學員訓練目標、身體狀況，有傷處請迴避
 2. 動作必須呼應本次模組（${targetModule}）的主要肌群
 3. 遵守上述強度遞增規則來建議重量
-4. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
+ 4. 若最近代償紀錄中有被抑制者，優先提出能喚醒/整合該肌群且不讓代償者搶工作的補充動作
+ 5. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
@@ -469,6 +548,7 @@ function generateAISuggestions(studentId) {
   const student = DB.getStudent(studentId);
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
+  const compensationFindings = collectCompensationFindings(sessions, 5);
 
   function withExerciseMeta(ex) {
     const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
@@ -571,7 +651,7 @@ function generateAISuggestions(studentId) {
       });
     }
 
-    return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
+    return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
   }
 
   // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
@@ -595,7 +675,7 @@ function generateAISuggestions(studentId) {
         plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
       });
     });
-    return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
+    return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
   }
 
   // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
@@ -614,7 +694,7 @@ function generateAISuggestions(studentId) {
       });
     });
   });
-  return setPrepBaseline(applyPlanningPreferences(plan, student, exerciseLib));
+  return setPrepBaseline(applyCompensationFindings(applyPlanningPreferences(plan, student, exerciseLib), compensationFindings));
 }
 
 // ── Prep exercise row helpers ──
@@ -819,6 +899,7 @@ function renderPrep(studentId) {
 
   const sessions = DB.getSessions(studentId);
   const lastSession = sessions[0];
+  const compensationFindings = collectCompensationFindings(sessions, 5);
   const planningPrefs = getPlanningPrefs(student);
   const learnedPreferCount = Object.values(planningPrefs.prefer).reduce((sum, n) => sum + n, 0);
   const learnedAvoidCount = Object.values(planningPrefs.avoid).reduce((sum, n) => sum + n, 0);
@@ -849,6 +930,17 @@ function renderPrep(studentId) {
     ${(learnedPreferCount || learnedAvoidCount) ? `
     <div class="fade-in" style="margin:0 16px 10px;padding:8px 12px;border:1px solid rgba(0,229,160,0.28);border-radius:10px;background:rgba(0,229,160,0.08);font-size:0.76rem;color:var(--text-secondary)">
       已學習排課偏好：常保留/新增 ${learnedPreferCount} 次，常刪除 ${learnedAvoidCount} 次
+    </div>` : ''}
+    ${compensationFindings.length ? `
+    <div class="prep-section fade-in stagger-1">
+      <div class="prep-section-title">🔎 最近代償紀錄</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+        ${compensationFindings.slice(0, 5).map(f => `
+          <div style="padding:8px 10px;border-radius:8px;background:var(--bg-card);border:1px solid var(--border);font-size:0.76rem;color:var(--text-secondary);line-height:1.45">
+            <span style="color:var(--text-muted)">${(f.date || '').slice(5) || '--'}｜${f.exerciseName || '動作'}</span><br>
+            <strong style="color:var(--danger)">${f.compensator}</strong> 代償 <strong style="color:var(--accent)">${f.inhibited}</strong>
+          </div>`).join('')}
+      </div>
     </div>` : ''}
     ${lastSession ? `
     <div class="prep-section fade-in stagger-1">
