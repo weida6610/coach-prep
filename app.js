@@ -453,6 +453,16 @@ function showInlineNewExercise(studentId) {
     </div>`;
 }
 
+function refreshPrepAfterAdd(studentId) {
+  const notes = document.getElementById('prep-notes')?.value || '';
+  if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
+  if (typeof rerenderCurrentViewPreserveScroll === 'function') {
+    rerenderCurrentViewPreserveScroll();
+  } else {
+    renderView('prep', studentId, { preserveScroll: true });
+  }
+}
+
 window.saveInlineNewExercise = function(studentId) {
   const name = document.getElementById('ni-name').value.trim();
   if (!name) { showToast('❌ 請輸入動作名稱'); return; }
@@ -470,8 +480,7 @@ window.saveInlineNewExercise = function(studentId) {
   });
   closeModal();
   showToast(`✅ 「${ex.name}」已加入資料庫與課表`);
-  navigationStack.pop();
-  navigate('prep', studentId);
+  refreshPrepAfterAdd(studentId);
 };
 
 function filterModalExercises(query) {
@@ -489,9 +498,7 @@ function addExerciseToPrep(exerciseId, studentId) {
     });
     closeModal();
     showToast(`✅ 已加入 ${ex.name}`);
-    // Re-render prep
-    navigationStack.pop();
-    navigate('prep', studentId);
+    refreshPrepAfterAdd(studentId);
   }
 }
 
