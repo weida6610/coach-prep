@@ -8,6 +8,7 @@ let currentSessionState = null;
 let geminiLoading = false;
 let historyPanelCollapsed = false;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
+const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
 
 // Shared planning helpers: keep multi-weight session records intact when reusing history.
 function isDbOrMachineExercise(name) {
@@ -290,6 +291,139 @@ function applyCompensationFindings(plan, findings) {
   });
 }
 
+function qualityBucket(quality) {
+  if (quality === '優秀' || quality === '良好') return 'good';
+  if (quality === '尚可') return 'ok';
+  if (isNeedsWorkQuality(quality)) return 'needsWork';
+  return '';
+}
+
+function hasTimeOutNote(notes) {
+  return String(notes || '').toLowerCase().includes('time out');
+}
+
+function trimNoteForSummary(notes) {
+  return String(notes || '').replace(/\s+/g, ' ').trim();
+}
+
+function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_SESSION_LIMIT) {
+  const byName = new Map();
+  sessions.slice(0, limit).forEach((session, sessionIdx) => {
+    (session.exercises || []).forEach(ex => {
+      const key = normalizeExerciseName(ex.name);
+      if (!key) return;
+      if (!byName.has(key)) {
+        byName.set(key, {
+          key,
+          name: ex.name,
+          category: ex.category || '',
+          target: ex.target || '',
+          count: 0,
+          good: 0,
+          ok: 0,
+          needsWork: 0,
+          timeout: 0,
+          latestDate: session.date || '',
+          latestQuality: ex.quality || '',
+          latestNotes: ex.notes || '',
+          history: []
+        });
+      }
+      const row = byName.get(key);
+      row.count++;
+      if (ex.category && !row.category) row.category = ex.category;
+      if (ex.target && !row.target) row.target = ex.target;
+      if (sessionIdx === 0) {
+        row.latestDate = session.date || '';
+        row.latestQuality = ex.quality || '';
+        row.latestNotes = ex.notes || '';
+      }
+      const bucket = qualityBucket(ex.quality);
+      if (bucket === 'good') row.good++;
+      else if (bucket === 'ok') row.ok++;
+      else if (bucket === 'needsWork') row.needsWork++;
+      if (hasTimeOutNote(ex.notes)) row.timeout++;
+      row.history.push({
+        date: session.date || '',
+        quality: ex.quality || '',
+        notes: trimNoteForSummary(ex.notes)
+      });
+    });
+  });
+
+  return Array.from(byName.values())
+    .map(row => ({
+      ...row,
+      signalScore: (row.needsWork * 3) + (row.timeout * 2.5) + (row.good * 1.2) + (row.ok * 0.6) + (row.count * 0.2)
+    }))
+    .sort((a, b) => b.signalScore - a.signalScore);
+}
+
+function evaluationCue(row) {
+  if (!row) return '';
+  if (row.timeout) return '最近曾 time out，多半是時間不足；若尚未補做，下一份課表排入或提早安排';
+  if (row.needsWork >= 2) return '近期待改善重複出現，優先降階、簡化或替換';
+  if (row.needsWork) return '近期評價需改善，保留品質空間並避免硬加強度';
+  if (row.good >= 2) return '近期表現優良，可小幅進階或加入變化';
+  if (row.ok >= 2) return '近期多為尚可，先穩定動作品質';
+  return '';
+}
+
+function formatExerciseEvaluationSummary(rows) {
+  if (!rows || !rows.length) return '無足夠動作評價紀錄';
+  return rows.slice(0, 12).map(row => {
+    const latest = row.latestQuality ? `最新:${row.latestQuality}` : '最新:未評';
+    const counts = `:D 優良${row.good} / :| 尚可${row.ok} / :'( 需改善${row.needsWork}`;
+    const cue = evaluationCue(row);
+    const notes = row.history
+      .filter(item => item.notes)
+      .slice(0, 3)
+      .map(item => `${item.date || '未註明'}:${item.notes}`)
+      .join('；');
+    const timeoutText = row.timeout ? `｜time out ${row.timeout}次（時間不足，若尚未補做則下一份課表要排入）` : '';
+    return `- ${row.name}${row.category ? `（${row.category}）` : ''}｜近${row.count}次｜${latest}｜${counts}${timeoutText}${notes ? `｜手寫評語:${notes}` : ''}${cue ? `｜決策:${cue}` : ''}`;
+  }).join('\n');
+}
+
+function applyExerciseEvaluationCues(plan, evaluationRows) {
+  if (!evaluationRows || !evaluationRows.length) return plan;
+  const byKey = new Map(evaluationRows.map(row => [row.key, row]));
+  return plan.map(ex => {
+    const next = { ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] };
+    const cue = evaluationCue(byKey.get(normalizeExerciseName(next.name)));
+    if (cue) appendCue(next, cue);
+    return next;
+  });
+}
+
+function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
+  if (!previousSession) return plan;
+  const used = new Set(plan.map(ex => normalizeExerciseName(ex.name)));
+  const nextPlan = [...plan];
+  (previousSession.exercises || []).forEach(raw => {
+    if (!hasTimeOutNote(raw.notes)) return;
+    const key = normalizeExerciseName(raw.name);
+    if (!key || used.has(key)) {
+      const existing = nextPlan.find(ex => normalizeExerciseName(ex.name) === key);
+      if (existing) appendCue(existing, '上次 time out 多半是時間不足，這次提早安排或保留完成空間');
+      return;
+    }
+    const lib = exerciseLib.find(item => item.id === raw.exerciseId || item.name === raw.name);
+    const ex = {
+      ...raw,
+      category: raw.category || lib?.category || '',
+      target: raw.target || lib?.target || '',
+      cues: raw.cues || lib?.cues || ''
+    };
+    nextPlan.push(buildPrepExerciseFromSession(ex, {
+      progress: false,
+      cues: '上次 time out 多半是時間不足，這次排入補做或提早安排'
+    }));
+    used.add(key);
+  });
+  return nextPlan;
+}
+
 function compactGeneratedPlan(plan) {
   const seen = new Set();
   return plan.filter(ex => {
@@ -300,10 +434,13 @@ function compactGeneratedPlan(plan) {
   });
 }
 
-function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings) {
+function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings, evaluationRows = []) {
   return setPrepBaseline(compactGeneratedPlan(
     applyCompensationFindings(
-      applyPlanningPreferences(plan, student, exerciseLib),
+      applyExerciseEvaluationCues(
+        applyPlanningPreferences(plan, student, exerciseLib),
+        evaluationRows
+      ),
       compensationFindings
     )
   ));
@@ -403,6 +540,7 @@ async function callGeminiAI(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
   const compensationFindings = collectCompensationFindings(sessions, 5);
+  const exerciseEvaluations = collectExerciseEvaluationSummary(sessions);
 
   function withExerciseMeta(ex) {
     const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
@@ -485,6 +623,9 @@ ${historyText}
 格式說明：「A 代償 B」代表 A 是代償者，B 是被抑制者。
 ${formatCompensationFindings(compensationFindings)}
 
+## 動作評價摘要（只彙整最近 ${EVALUATION_SUMMARY_SESSION_LIMIT} 堂課的品質與手寫備註）
+${formatExerciseEvaluationSummary(exerciseEvaluations)}
+
 ## 課表模組輪替規則（重要）
 - **模組 A**：上肢推（胸大肌、三角肌、三頭肌）＋ 下肢拉（臀大肌、腿後側）
 - **模組 B**：上肢拉（背闊肌、菱形肌、二頭肌）＋ 下肢推（股四頭肌、臀肌）
@@ -498,15 +639,18 @@ ${libText}
 ## 排課強度遞增規則（極重要）
 1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
 2. **Push up（扶槓）**：槓架越低強度越大。例如「槓6」比「槓8」強度更大。品質優秀時建議降一格槓數
-3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，尤其是備註顯示 **time out** 或品質標記為「待加強」的項目，這些動作應優先安排進課表
+3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，以及手寫備註中提到的代償、疼痛、控制問題或調整建議
+4. **動作評價邏輯**：:D 優良 可以小幅進階或變化；:| 尚可 不要追求新奇，先穩定品質；:'( 需改善 優先降階、簡化、替換或安排喚醒/控制練習
+5. **time out 邏輯**：time out 通常代表時間不足，不代表動作品質差；若最近一堂有 time out，下一份課表應排入補做或提早安排，不要因為 time out 就降階
 
 ## 你的任務
 請提出 **剛好 3 個** 符合本次模組（${targetModule}）且適合該學員目標的「創意補充動作」：
 1. 必須符合學員訓練目標、身體狀況，有傷處請迴避
 2. 動作必須呼應本次模組（${targetModule}）的主要肌群
 3. 遵守上述強度遞增規則來建議重量
- 4. 若最近代償紀錄中有被抑制者，優先提出能喚醒/整合該肌群且不讓代償者搶工作的補充動作
- 5. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
+4. 必須參考「動作評價摘要」與手寫評語：不要只推薦新動作，要說明它是在進階、維持、補做 time out、降階、替換、或補強控制
+5. 若最近代償紀錄或手寫評語中有代償訊號，優先提出能喚醒/整合該肌群且不讓代償者搶工作的補充動作
+6. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
@@ -516,7 +660,7 @@ ${libText}
     "sets": 3,
     "reps": "12",
     "weight": "15kg",
-    "cues": "提示"
+    "cues": "提示，需包含根據動作評價或手寫評語而做的進階/維持/time out補做/降階/替換理由"
   }
 ]`;
 
@@ -674,6 +818,7 @@ function generateAISuggestions(studentId) {
   const sessions = DB.getSessions(studentId);
   const exerciseLib = DB.getExercises();
   const compensationFindings = collectCompensationFindings(sessions, 5);
+  const exerciseEvaluations = collectExerciseEvaluationSummary(sessions);
 
   function withExerciseMeta(ex) {
     const lib = exerciseLib.find(item => item.id === ex.exerciseId || item.name === ex.name);
@@ -759,24 +904,24 @@ function generateAISuggestions(studentId) {
 
       // 優先排序：time out / 需改善的排前面
       uniqueFromN1.sort((a, b) => {
-        const aUrgent = (a.notes || '').toLowerCase().includes('time out')
+        const aUrgent = hasTimeOutNote(a.notes)
           || isNeedsWorkQuality(a.quality) ? 1 : 0;
-        const bUrgent = (b.notes || '').toLowerCase().includes('time out')
+        const bUrgent = hasTimeOutNote(b.notes)
           || isNeedsWorkQuality(b.quality) ? 1 : 0;
         return bUrgent - aUrgent;
       });
 
       uniqueFromN1.slice(0, MAX_UNIQUE_CARRYOVER_EXERCISES).forEach(e => {
-        const isTimeout = (e.notes || '').toLowerCase().includes('time out');
+        const isTimeout = hasTimeOutNote(e.notes);
         const needsWork = isNeedsWorkQuality(e.quality);
         plan.push(buildPrepExerciseFromSession(e, {
           progress: false,
-          cues: isTimeout ? '上次 time out，建議留意' : needsWork ? '上次品質需改善' : 'N-1 獨有動作'
+          cues: isTimeout ? '上次 time out 多半是時間不足，這次排入補做或提早安排' : needsWork ? '上次品質需改善' : 'N-1 獨有動作'
         }));
       });
     }
 
-    return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
+    return finalizeGeneratedPlan(carryForwardTimeoutExercises(plan, sessionN1, exerciseLib), student, exerciseLib, compensationFindings, exerciseEvaluations);
   }
 
   // ── 情況 2：只有 N-1，沒有 N-2 → N 與 N-1 相反模組 ──
@@ -800,7 +945,7 @@ function generateAISuggestions(studentId) {
         plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
       });
     });
-    return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
+    return finalizeGeneratedPlan(carryForwardTimeoutExercises(plan, sessionN1, exerciseLib), student, exerciseLib, compensationFindings, exerciseEvaluations);
   }
 
   // ── 情況 3：完全沒有歷史 → 從動作庫均衡挑選 ──
@@ -819,7 +964,7 @@ function generateAISuggestions(studentId) {
       });
     });
   });
-  return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings);
+  return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings, exerciseEvaluations);
 }
 
 // ── Prep exercise row helpers ──
