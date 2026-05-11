@@ -9,6 +9,8 @@ let geminiLoading = false;
 let historyPanelCollapsed = false;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
+const PUSH_UP_BASE_BAR = 6;
+const PUSH_UP_MIN_PROGRESS_BAR = 4;
 
 // Shared planning helpers: keep multi-weight session records intact when reusing history.
 function isDbOrMachineExercise(name) {
@@ -35,6 +37,34 @@ function progressExerciseWeight(weight, name, quality) {
   return newWeight;
 }
 
+function isPushUpBarExercise(name) {
+  const text = String(name || '').toLowerCase();
+  return text.includes('push up') || text.includes('push-up') || text.includes('伏地挺身') || text.includes('扶槓') || /槓\d+/.test(text);
+}
+
+function normalizePushUpBarName(name) {
+  if (!isPushUpBarExercise(name)) return name;
+  return String(name || '').replace(/槓\s*(\d+)/g, (match, rawBar) => {
+    const bar = parseInt(rawBar, 10);
+    if (!Number.isFinite(bar)) return match;
+    if (bar < PUSH_UP_MIN_PROGRESS_BAR) return `槓${PUSH_UP_MIN_PROGRESS_BAR}`;
+    if (bar > PUSH_UP_BASE_BAR) return `槓${PUSH_UP_BASE_BAR}`;
+    return `槓${bar}`;
+  });
+}
+
+function progressPushUpBarName(name, quality) {
+  const normalized = normalizePushUpBarName(name);
+  if (!isPushUpBarExercise(normalized)) return normalized;
+  const match = String(normalized || '').match(/槓\s*(\d+)/);
+  if (!match) return normalized;
+  const currentBar = parseInt(match[1], 10);
+  if (quality === '優秀' && currentBar > PUSH_UP_MIN_PROGRESS_BAR) {
+    return String(normalized).replace(/槓\s*\d+/, `槓${currentBar - 1}`);
+  }
+  return normalized;
+}
+
 function getExerciseGroupsForPlanning(ex) {
   if (typeof getSessionExerciseGroups === 'function') {
     const groups = getSessionExerciseGroups(ex).filter(g => g.count > 0);
@@ -51,7 +81,7 @@ function buildPrepExerciseFromSession(ex, options = {}) {
     count: parseInt(g.count) || 1
   }));
   const primary = groups[0] || { weight: '', reps: ex.reps || '10', count: parseInt(ex.sets) || 1 };
-  const name = options.name || ex.name;
+  const name = normalizePushUpBarName(options.name || ex.name);
   const cues = options.cues || '';
 
   return {
@@ -396,6 +426,14 @@ function applyExerciseEvaluationCues(plan, evaluationRows) {
   });
 }
 
+function applyPushUpBarRules(plan) {
+  return plan.map(ex => ({
+    ...ex,
+    name: normalizePushUpBarName(ex.name),
+    subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : []
+  }));
+}
+
 function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
   if (!previousSession) return plan;
   const used = new Set(plan.map(ex => normalizeExerciseName(ex.name)));
@@ -438,7 +476,7 @@ function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings,
   return setPrepBaseline(compactGeneratedPlan(
     applyCompensationFindings(
       applyExerciseEvaluationCues(
-        applyPlanningPreferences(plan, student, exerciseLib),
+        applyPlanningPreferences(applyPushUpBarRules(plan), student, exerciseLib),
         evaluationRows
       ),
       compensationFindings
@@ -638,7 +676,7 @@ ${libText}
 
 ## 排課強度遞增規則（極重要）
 1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
-2. **Push up（扶槓）**：槓架越低強度越大。例如「槓6」比「槓8」強度更大。品質優秀時建議降一格槓數
+2. **Push up（扶槓）**：槓6 是多數學員的基準高度，數字代表架高高度，不是重量；數字越小越難。進步時只能從 槓6 → 槓5 → 槓4，不可產生 槓7 以上，絕對不可產生 槓9、槓10、槓11 這類高度
 3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，以及手寫備註中提到的代償、疼痛、控制問題或調整建議
 4. **動作評價邏輯**：:D 優良 可以小幅進階或變化；:| 尚可 不要追求新奇，先穩定品質；:'( 需改善 優先降階、簡化、替換或安排喚醒/控制練習
 5. **time out 邏輯**：time out 通常代表時間不足，不代表動作品質差；若最近一堂有 time out，下一份課表應排入補做或提早安排，不要因為 time out 就降階
@@ -718,7 +756,7 @@ ${libText}
     const baseItems = currentPrepPlan.filter(ex => !ex.isFreeStyle);
     const freeItems = exercises.slice(0, 3).map(ex => ({
       exerciseId: 'AI-' + Math.random().toString(36).substr(2, 6),
-      name: ex.name,
+      name: normalizePushUpBarName(ex.name),
       category: ex.category,
       target: ex.target || '',
       sets: ex.sets || 3,
@@ -836,17 +874,10 @@ function generateAISuggestions(studentId) {
   const sessionN3 = sessions[2] || null;
   const sessionN4 = sessions[3] || null;
 
-  // Push up（扶槓）：偵測槓數，數字越小強度越大
+  // Push up（扶槓）：槓6是基準高度，進步只往槓5/槓4，避免產生槓11這類無效高度。
   function adjustPushUpBar(name, quality) {
-    if (!name) return null;
-    const match = name.match(/槓(\d+)/);
-    if (!match) return null;
-    const currentBar = parseInt(match[1]);
-    // 品質優秀 → 降一格（強度增加）
-    if (quality === '優秀' && currentBar > 1) {
-      return name.replace(`槓${currentBar}`, `槓${currentBar - 1}`);
-    }
-    return null; // 維持不變
+    const adjusted = progressPushUpBarName(name, quality);
+    return adjusted !== name ? adjusted : null;
   }
 
   // 收集某個 session 的動作名稱集合
