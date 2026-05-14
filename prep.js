@@ -22,12 +22,16 @@ function isNeedsWorkQuality(quality) {
   return quality === '待加強' || quality === '需改善';
 }
 
+function isGoodQuality(quality) {
+  return quality === '優良' || quality === '優秀' || quality === '良好';
+}
+
 function progressExerciseWeight(weight, name, quality) {
   let newWeight = weight || '';
   if (newWeight && isPushUpBarExercise(`${name || ''} ${newWeight}`)) {
     return progressPushUpBarText(newWeight, quality);
   }
-  if (quality === '優秀' && newWeight && newWeight !== '-') {
+  if (isGoodQuality(quality) && newWeight && newWeight !== '-') {
     const increment = isDbOrMachineExercise(name) ? 2.5 : 5;
     const numMatch = newWeight.match(/(\d+\.?\d*)/);
     if (numMatch) {
@@ -65,7 +69,7 @@ function normalizePushUpBarName(name) {
 
 function progressPushUpBarText(text, quality) {
   const normalized = normalizePushUpBarText(text);
-  if (quality !== '優秀') return normalized;
+  if (!isGoodQuality(quality)) return normalized;
   return normalized.replace(/槓\s*(KB|\d+)/i, (match, rawBar) => {
     const token = normalizePushUpBarToken(rawBar);
     const idx = PUSH_UP_BAR_SEQUENCE.indexOf(token);
@@ -337,7 +341,7 @@ function applyCompensationFindings(plan, findings) {
 }
 
 function qualityBucket(quality) {
-  if (quality === '優秀' || quality === '良好') return 'good';
+  if (isGoodQuality(quality)) return 'good';
   if (quality === '尚可') return 'ok';
   if (isNeedsWorkQuality(quality)) return 'needsWork';
   return '';
@@ -691,7 +695,7 @@ ${libText}
 
 ## 排課強度遞增規則（極重要）
 1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
-2. **Push up（扶槓）**：槓6 是多數學員的基準高度，數字代表架高高度，不是重量；數字越小越難。優秀時依序進階：槓6 → 槓4 → 槓3 → 槓0 → 槓KB。不可把槓6當重量加5變成槓11，也不可產生槓7以上高度
+2. **Push up（扶槓）**：槓6 是多數學員的基準高度，數字代表架高高度，不是重量；數字越小越難。品質優良時依序進階：槓6 → 槓4 → 槓3 → 槓0 → 槓KB。不可把槓6當重量加5變成槓11，也不可產生槓7以上高度
 3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，以及手寫備註中提到的代償、疼痛、控制問題或調整建議
 4. **動作評價邏輯**：:D 優良 可以小幅進階或變化；:| 尚可 不要追求新奇，先穩定品質；:'( 需改善 優先降階、簡化、替換或安排喚醒/控制練習
 5. **time out 邏輯**：time out 通常代表時間不足，不代表動作品質差；若最近一堂有 time out，下一份課表應排入補做或提早安排，不要因為 time out 就降階
@@ -928,7 +932,7 @@ function generateAISuggestions(studentId) {
       if (adjustedName) name = adjustedName;
 
       let cues = '';
-      if (e.quality === '優秀') cues = '上次品質優秀，已依規則微幅加強';
+      if (isGoodQuality(e.quality)) cues = '上次品質優良，已依規則微幅加強';
       else if (isNeedsWorkQuality(e.quality)) cues = '上次品質需改善，先維持重量並注意動作品質';
       else if ((e.notes || '').toLowerCase().includes('time out')) cues = '上次 time out，建議保留休息與節奏空間';
 
@@ -1302,7 +1306,7 @@ function renderPrep(studentId) {
           </div>
           ${s.exercises.map(e => {
             const groups = getSessionExerciseGroups(e);
-            const qualIcon = e.quality==='優秀'?'⭐':e.quality==='良好'?'👍':e.quality==='待加強'?'⚡':'-';
+            const qualIcon = isGoodQuality(e.quality) ? ':D' : e.quality === '尚可' ? ':|' : isNeedsWorkQuality(e.quality) ? ":'(" : '-';
             return groups.map((g, gi) => `
           <div style="display:flex;align-items:center;gap:4px;padding:${gi===0?'5':'2'}px 0;${gi===0?'border-top:1px solid var(--border);':''}font-size:0.78rem">
             <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${gi===0?e.name:''}</div>
@@ -1407,8 +1411,9 @@ function renderSession(studentId) {
   const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
   const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
   const qualities = [
-    { emoji:'😊', label:'優秀' }, { emoji:'🙂', label:'良好' },
-    { emoji:'😐', label:'尚可' }, { emoji:'😓', label:'需改善' }
+    { emoji:':D', label:'優良' },
+    { emoji:':|', label:'尚可' },
+    { emoji:":'(", label:'需改善' }
   ];
   const conditionOptions = ['😴 疲勞','🤕 疼痛','💪 狀態佳','🤒 身體不適','😰 壓力大','🌙 睡眠不足'];
 
