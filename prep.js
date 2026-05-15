@@ -10,6 +10,26 @@ let historyPanelCollapsed = false;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
 const PUSH_UP_BAR_SEQUENCE = ['槓6', '槓4', '槓3', '槓0', '槓KB'];
+const DECISION_TAG_OPTIONS = [
+  { id: 'keep', label: '保留/維持', aliases: ['保留', '維持', '保持', '留著', 'keep'], cue: '依手寫標籤保留，不硬換動作' },
+  { id: 'advance', label: '進階', aliases: ['進階', '升級', '加強', '可加強', '可進階'], cue: '依手寫標籤小幅進階' },
+  { id: 'regress', label: '退階/降階', aliases: ['退階', '降階', '降級', '簡化', '退一階'], cue: '依手寫標籤退階或簡化' },
+  { id: 'replace', label: '替換', aliases: ['替換', '換動作', '改動作', '換掉'], cue: '依手寫標籤替換同類型動作' },
+  { id: 'pause', label: '暫停/不要排', aliases: ['暫停', '不要排', '先不要', '本次不排', '取消'], cue: '依手寫標籤暫停，這次不要排入' },
+  { id: 'makeup', label: '補做', aliases: ['補做', '下次補', '下堂補', '補回來', '未完成補'], cue: '依手寫標籤排入補做' },
+  { id: 'lessLoad', label: '減量', aliases: ['減量', '降重量', '重量下降', '輕一點', '減重'], cue: '依手寫標籤降低負重' },
+  { id: 'moreLoad', label: '加量', aliases: ['加量', '加重', '重量上升', '加重量'], cue: '依手寫標籤增加負重' },
+  { id: 'lessVolume', label: '減組', aliases: ['減組', '少一組', '減少組數'], cue: '依手寫標籤減少組數' },
+  { id: 'moreVolume', label: '加組', aliases: ['加組', '多一組', '增加組數'], cue: '依手寫標籤增加組數' },
+  { id: 'control', label: '控制/穩定', aliases: ['控制', '穩定', '節奏', 'tempo', '停頓', '放慢'], cue: '依手寫標籤優先控制、穩定與節奏' },
+  { id: 'shortRom', label: '縮小 ROM', aliases: ['縮rom', '縮小rom', '半程', '小幅度', '縮短幅度'], cue: '依手寫標籤縮小 ROM，先守住品質' },
+  { id: 'fullRom', label: '增加 ROM', aliases: ['加rom', '增加rom', '全rom', '全幅度', '加深'], cue: '依手寫標籤增加 ROM 或幅度' },
+  { id: 'activate', label: '喚醒', aliases: ['喚醒', '啟動', 'activation', 'activate'], cue: '依手寫標籤安排喚醒或整合' },
+  { id: 'compTable', label: '代償表', aliases: ['代償表', '查代償', '看代償', '代償檢查'], cue: '依手寫標籤先看代償表再安排' },
+  { id: 'pain', label: '疼痛/局部不適', aliases: ['疼痛', '痛感', '會痛', '不舒服', '膝不適', '肩不適', '腰不適', '髖不適', '手腕不適'], cue: '依手寫標籤避開疼痛並降階' },
+  { id: 'timeShort', label: '時間不足', aliases: ['時間不足', '做不完', '來不及', '時間不夠'], cue: '依手寫標籤提早安排或縮短課表' },
+  { id: 'condition', label: '狀態不適', aliases: ['狀態不適', '狀況不適合', '當天不適合', '身體不適', '狀態不好'], cue: '依手寫標籤視為當日狀態問題，不直接視為動作品質差' }
+];
 
 // Shared planning helpers: keep multi-weight session records intact when reusing history.
 function isDbOrMachineExercise(name) {
@@ -78,10 +98,43 @@ function progressPushUpBarText(text, quality) {
   });
 }
 
+function regressPushUpBarText(text) {
+  const normalized = normalizePushUpBarText(text);
+  return normalized.replace(/槓\s*(KB|\d+)/i, (match, rawBar) => {
+    const token = normalizePushUpBarToken(rawBar);
+    const idx = PUSH_UP_BAR_SEQUENCE.indexOf(token);
+    if (idx <= 0) return token;
+    return PUSH_UP_BAR_SEQUENCE[idx - 1];
+  });
+}
+
 function progressPushUpBarName(name, quality) {
   const normalized = normalizePushUpBarName(name);
   if (!isPushUpBarExercise(normalized)) return normalized;
   return progressPushUpBarText(normalized, quality);
+}
+
+function regressPushUpBarName(name) {
+  const normalized = normalizePushUpBarName(name);
+  if (!isPushUpBarExercise(normalized)) return normalized;
+  return regressPushUpBarText(normalized);
+}
+
+function regressExerciseWeight(weight, name) {
+  let newWeight = weight || '';
+  if (newWeight && isPushUpBarExercise(`${name || ''} ${newWeight}`)) {
+    return regressPushUpBarText(newWeight);
+  }
+  if (newWeight && newWeight !== '-') {
+    const increment = isDbOrMachineExercise(name) ? 2.5 : 5;
+    const numMatch = newWeight.match(/(\d+\.?\d*)/);
+    if (numMatch) {
+      const newVal = Math.max(0, parseFloat(numMatch[1]) - increment);
+      const display = newVal % 1 === 0 ? String(newVal) : newVal.toFixed(1);
+      newWeight = newWeight.replace(numMatch[1], display);
+    }
+  }
+  return newWeight;
 }
 
 function getExerciseGroupsForPlanning(ex) {
@@ -102,6 +155,7 @@ function buildPrepExerciseFromSession(ex, options = {}) {
   const primary = groups[0] || { weight: '', reps: ex.reps || '10', count: parseInt(ex.sets) || 1 };
   const name = normalizePushUpBarName(options.name || ex.name);
   const cues = options.cues || '';
+  const planningReason = options.reason || cues;
 
   return {
     exerciseId: ex.exerciseId || ex.id,
@@ -112,6 +166,7 @@ function buildPrepExerciseFromSession(ex, options = {}) {
     reps: primary.reps,
     weight: primary.weight || '-',
     cues,
+    planningReason,
     subSets: groups.slice(1).map(g => ({
       weight: g.weight || '',
       reps: g.reps,
@@ -187,6 +242,7 @@ function applyPlanningPreferences(plan, student, exerciseLib) {
           reps: ex.reps || replacement.defaultReps || '10',
           weight: ex.weight || '',
           cues: '依過去編修偏好替換',
+          planningReason: '依過去編修偏好替換',
           subSets: ex.subSets || []
         };
       } else {
@@ -314,6 +370,7 @@ function appendCue(ex, cue) {
   if (!cue) return ex;
   if (ex.cues && ex.cues.includes(cue)) return ex;
   ex.cues = ex.cues ? `${ex.cues}；${cue}` : cue;
+  if (!ex.planningReason) ex.planningReason = cue;
   return ex;
 }
 
@@ -351,6 +408,52 @@ function hasTimeOutNote(notes) {
   return String(notes || '').toLowerCase().includes('time out');
 }
 
+function parseDecisionTags(notes) {
+  const text = String(notes || '').toLowerCase();
+  const tags = [];
+  DECISION_TAG_OPTIONS.forEach(option => {
+    if (option.aliases.some(alias => text.includes(String(alias).toLowerCase()))) {
+      tags.push(option.id);
+    }
+  });
+  if (hasTimeOutNote(notes)) tags.push('timeout');
+  return [...new Set(tags)];
+}
+
+function decisionTagOption(id) {
+  return DECISION_TAG_OPTIONS.find(option => option.id === id);
+}
+
+function decisionTagLabels(tags) {
+  return (tags || [])
+    .filter(id => id !== 'timeout')
+    .map(id => decisionTagOption(id)?.label || id);
+}
+
+function hasAnyDecisionTag(tags, ids) {
+  const set = new Set(tags || []);
+  return ids.some(id => set.has(id));
+}
+
+function formatDecisionTagOptionsForPrompt() {
+  return DECISION_TAG_OPTIONS
+    .map(option => `- ${option.label}：可寫「${option.aliases.slice(0, 4).join(' / ')}」；排課意思：${option.cue}`)
+    .join('\n');
+}
+
+function shouldProgressFromQualityAndTags(quality, tags) {
+  if (hasAnyDecisionTag(tags, ['advance', 'moreLoad', 'pause', 'replace', 'keep', 'regress', 'lessLoad', 'pain', 'condition', 'control', 'shortRom'])) return false;
+  return isGoodQuality(quality);
+}
+
+function shouldCarryForwardTimeOut(notes) {
+  const tags = parseDecisionTags(notes);
+  if (hasAnyDecisionTag(tags, ['makeup', 'timeShort'])) return true;
+  if (!hasTimeOutNote(notes)) return false;
+  if (hasAnyDecisionTag(tags, ['pause', 'condition', 'replace', 'regress', 'pain'])) return false;
+  return true;
+}
+
 function trimNoteForSummary(notes) {
   return String(notes || '').replace(/\s+/g, ' ').trim();
 }
@@ -375,10 +478,13 @@ function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_S
           latestDate: session.date || '',
           latestQuality: ex.quality || '',
           latestNotes: ex.notes || '',
+          latestDecisionTags: [],
+          decisionTags: {},
           history: []
         });
       }
       const row = byName.get(key);
+      const tags = parseDecisionTags(ex.notes);
       row.count++;
       if (ex.category && !row.category) row.category = ex.category;
       if (ex.target && !row.target) row.target = ex.target;
@@ -386,16 +492,22 @@ function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_S
         row.latestDate = session.date || '';
         row.latestQuality = ex.quality || '';
         row.latestNotes = ex.notes || '';
+        row.latestDecisionTags = tags;
       }
       const bucket = qualityBucket(ex.quality);
       if (bucket === 'good') row.good++;
       else if (bucket === 'ok') row.ok++;
       else if (bucket === 'needsWork') row.needsWork++;
       if (hasTimeOutNote(ex.notes)) row.timeout++;
+      tags.forEach(tag => {
+        if (tag === 'timeout') return;
+        row.decisionTags[tag] = (row.decisionTags[tag] || 0) + 1;
+      });
       row.history.push({
         date: session.date || '',
         quality: ex.quality || '',
-        notes: trimNoteForSummary(ex.notes)
+        notes: trimNoteForSummary(ex.notes),
+        tags
       });
     });
   });
@@ -410,7 +522,13 @@ function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_S
 
 function evaluationCue(row) {
   if (!row) return '';
-  if (row.timeout) return '最近曾 time out，多半是時間不足；若尚未補做，下一份課表排入或提早安排';
+  const latestTags = row.latestDecisionTags || [];
+  if (hasAnyDecisionTag(latestTags, ['pause'])) return '手寫標籤暫停/不要排，這次先移出課表';
+  if (hasAnyDecisionTag(latestTags, ['replace'])) return '手寫標籤替換，優先換同類型動作';
+  if (hasAnyDecisionTag(latestTags, ['regress', 'lessLoad', 'pain'])) return '手寫標籤退階/減量/疼痛，優先降階並保留品質';
+  if (hasAnyDecisionTag(latestTags, ['condition'])) return '手寫標籤狀態不適，視為當日狀態問題，不直接追重量';
+  if (hasAnyDecisionTag(latestTags, ['makeup', 'timeShort'])) return '手寫標籤補做/時間不足，下一份課表排入或提早安排';
+  if (row.timeout) return '最近曾 time out，若是時間不足請補做；若是狀態不適請用決策標籤處理';
   if (row.needsWork >= 2) return '近期待改善重複出現，優先降階、簡化或替換';
   if (row.needsWork) return '近期評價需改善，保留品質空間並避免硬加強度';
   if (row.good >= 2) return '近期表現優良，可小幅進階或加入變化';
@@ -422,15 +540,16 @@ function formatExerciseEvaluationSummary(rows) {
   if (!rows || !rows.length) return '無足夠動作評價紀錄';
   return rows.slice(0, 12).map(row => {
     const latest = row.latestQuality ? `最新:${row.latestQuality}` : '最新:未評';
-    const counts = `:D 優良${row.good} / :| 尚可${row.ok} / :'( 需改善${row.needsWork}`;
+    const counts = `😀 優良${row.good} / 😐 尚可${row.ok} / 😢 需改善${row.needsWork}`;
     const cue = evaluationCue(row);
+    const tagText = decisionTagLabels(row.latestDecisionTags).join('、');
     const notes = row.history
       .filter(item => item.notes)
       .slice(0, 3)
       .map(item => `${item.date || '未註明'}:${item.notes}`)
       .join('；');
-    const timeoutText = row.timeout ? `｜time out ${row.timeout}次（時間不足，若尚未補做則下一份課表要排入）` : '';
-    return `- ${row.name}${row.category ? `（${row.category}）` : ''}｜近${row.count}次｜${latest}｜${counts}${timeoutText}${notes ? `｜手寫評語:${notes}` : ''}${cue ? `｜決策:${cue}` : ''}`;
+    const timeoutText = row.timeout ? `｜time out ${row.timeout}次（原因看手寫決策標籤；無標籤時需保守確認）` : '';
+    return `- ${row.name}${row.category ? `（${row.category}）` : ''}｜近${row.count}次｜${latest}｜${counts}${tagText ? `｜標籤:${tagText}` : ''}${timeoutText}${notes ? `｜手寫評語:${notes}` : ''}${cue ? `｜決策:${cue}` : ''}`;
   }).join('\n');
 }
 
@@ -443,6 +562,83 @@ function applyExerciseEvaluationCues(plan, evaluationRows) {
     if (cue) appendCue(next, cue);
     return next;
   });
+}
+
+function clonePrepExercise(ex) {
+  return { ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] };
+}
+
+function adjustPrepExerciseLoad(ex, direction) {
+  const next = clonePrepExercise(ex);
+  if (direction === 'down') {
+    next.name = regressPushUpBarName(next.name);
+    next.weight = regressExerciseWeight(next.weight, next.name) || next.weight;
+    next.subSets = next.subSets.map(ss => ({ ...ss, weight: regressExerciseWeight(ss.weight, next.name) || ss.weight }));
+  } else if (direction === 'up') {
+    next.name = progressPushUpBarName(next.name, '優良');
+    next.weight = progressExerciseWeight(next.weight, next.name, '優良') || next.weight;
+    next.subSets = next.subSets.map(ss => ({ ...ss, weight: progressExerciseWeight(ss.weight, next.name, '優良') || ss.weight }));
+  }
+  return next;
+}
+
+function adjustPrepExerciseVolume(ex, delta) {
+  const next = clonePrepExercise(ex);
+  next.sets = Math.max(1, (parseInt(next.sets, 10) || 1) + delta);
+  next.subSets = next.subSets.map(ss => ({ ...ss, sets: Math.max(1, (parseInt(ss.sets, 10) || 1) + delta) }));
+  return next;
+}
+
+function findDecisionReplacement(ex, plan, exerciseLib) {
+  const used = new Set(plan.map(item => normalizeExerciseName(item.name)));
+  const currentKey = normalizeExerciseName(ex.name);
+  return exerciseLib.find(item =>
+    item.category === ex.category
+    && normalizeExerciseName(item.name) !== currentKey
+    && !used.has(normalizeExerciseName(item.name))
+  ) || null;
+}
+
+function applyDecisionTagRules(plan, evaluationRows, exerciseLib) {
+  if (!evaluationRows || !evaluationRows.length) return plan;
+  const byKey = new Map(evaluationRows.map(row => [row.key, row]));
+  const result = [];
+  plan.forEach(ex => {
+    const row = byKey.get(normalizeExerciseName(ex.name));
+    const tags = row?.latestDecisionTags || [];
+    let next = clonePrepExercise(ex);
+    if (hasAnyDecisionTag(tags, ['pause'])) return;
+    if (hasAnyDecisionTag(tags, ['replace'])) {
+      const replacement = findDecisionReplacement(next, [...result, ...plan], exerciseLib);
+      if (replacement) {
+        next = {
+          exerciseId: replacement.id,
+          name: replacement.name,
+          category: replacement.category,
+          target: replacement.target || '',
+          sets: next.sets || replacement.defaultSets || 3,
+          reps: next.reps || replacement.defaultReps || '10',
+          weight: next.weight || '',
+          cues: '依手寫標籤替換同類型動作',
+          planningReason: '依手寫標籤替換同類型動作',
+          subSets: next.subSets || []
+        };
+      } else {
+        appendCue(next, '手寫標籤要求替換，但動作庫暫無同類型替代，請人工確認');
+      }
+    }
+    if (hasAnyDecisionTag(tags, ['regress', 'lessLoad', 'pain'])) next = adjustPrepExerciseLoad(next, 'down');
+    if (hasAnyDecisionTag(tags, ['advance', 'moreLoad'])) next = adjustPrepExerciseLoad(next, 'up');
+    if (hasAnyDecisionTag(tags, ['lessVolume'])) next = adjustPrepExerciseVolume(next, -1);
+    if (hasAnyDecisionTag(tags, ['moreVolume'])) next = adjustPrepExerciseVolume(next, 1);
+    tags.forEach(tag => {
+      if (tag === 'timeout') return;
+      const option = decisionTagOption(tag);
+      if (option) appendCue(next, option.cue);
+    });
+    result.push(next);
+  });
+  return result;
 }
 
 function applyPushUpBarRules(plan) {
@@ -458,11 +654,17 @@ function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
   const used = new Set(plan.map(ex => normalizeExerciseName(ex.name)));
   const nextPlan = [...plan];
   (previousSession.exercises || []).forEach(raw => {
-    if (!hasTimeOutNote(raw.notes)) return;
+    const tags = parseDecisionTags(raw.notes);
+    if (!shouldCarryForwardTimeOut(raw.notes)) return;
     const key = normalizeExerciseName(raw.name);
     if (!key || used.has(key)) {
       const existing = nextPlan.find(ex => normalizeExerciseName(ex.name) === key);
-      if (existing) appendCue(existing, '上次 time out 多半是時間不足，這次提早安排或保留完成空間');
+      if (existing) {
+        const cue = hasAnyDecisionTag(tags, ['makeup', 'timeShort'])
+          ? '上次標記補做/時間不足，這次提早安排或保留完成空間'
+          : '上次 time out 未標原因，若非時間不足請用狀態不適/暫停/退階/替換標籤修正';
+        appendCue(existing, cue);
+      }
       return;
     }
     const lib = exerciseLib.find(item => item.id === raw.exerciseId || item.name === raw.name);
@@ -474,7 +676,9 @@ function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
     };
     nextPlan.push(buildPrepExerciseFromSession(ex, {
       progress: false,
-      cues: '上次 time out 多半是時間不足，這次排入補做或提早安排'
+      cues: hasAnyDecisionTag(tags, ['makeup', 'timeShort'])
+        ? '上次標記補做/時間不足，這次排入補做或提早安排'
+        : '上次 time out 未標原因，保守排入並請確認是否為時間不足'
     }));
     used.add(key);
   });
@@ -495,7 +699,11 @@ function finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings,
   return setPrepBaseline(compactGeneratedPlan(
     applyCompensationFindings(
       applyExerciseEvaluationCues(
-        applyPlanningPreferences(applyPushUpBarRules(plan), student, exerciseLib),
+        applyDecisionTagRules(
+          applyPlanningPreferences(applyPushUpBarRules(plan), student, exerciseLib),
+          evaluationRows,
+          exerciseLib
+        ),
         evaluationRows
       ),
       compensationFindings
@@ -683,6 +891,10 @@ ${formatCompensationFindings(compensationFindings)}
 ## 動作評價摘要（只彙整最近 ${EVALUATION_SUMMARY_SESSION_LIMIT} 堂課的品質與手寫備註）
 ${formatExerciseEvaluationSummary(exerciseEvaluations)}
 
+## 可辨識手寫決策標籤
+教練可能會在動作備註中直接寫以下標籤或同義詞；這些標籤優先於單純評分或 time out。
+${formatDecisionTagOptionsForPrompt()}
+
 ## 課表模組輪替規則（重要）
 - **模組 A**：上肢推（胸大肌、三角肌、三頭肌）＋ 下肢拉（臀大肌、腿後側）
 - **模組 B**：上肢拉（背闊肌、菱形肌、二頭肌）＋ 下肢推（股四頭肌、臀肌）
@@ -697,8 +909,8 @@ ${libText}
 1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
 2. **Push up（扶槓）**：槓6 是多數學員的基準高度，數字代表架高高度，不是重量；數字越小越難。品質優良時依序進階：槓6 → 槓4 → 槓3 → 槓0 → 槓KB。不可把槓6當重量加5變成槓11，也不可產生槓7以上高度
 3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，以及手寫備註中提到的代償、疼痛、控制問題或調整建議
-4. **動作評價邏輯**：:D 優良 可以小幅進階或變化；:| 尚可 不要追求新奇，先穩定品質；:'( 需改善 優先降階、簡化、替換或安排喚醒/控制練習
-5. **time out 邏輯**：time out 通常代表時間不足，不代表動作品質差；若最近一堂有 time out，下一份課表應排入補做或提早安排，不要因為 time out 就降階
+4. **動作評價邏輯**：😀 優良 可以小幅進階或變化；😐 尚可 不要追求新奇，先穩定品質；😢 需改善 優先降階、簡化、替換或安排喚醒/控制練習
+5. **time out 邏輯**：time out 不一定等於時間不足；若手寫標籤有「補做」或「時間不足」才優先排入補做/提早安排；若有「狀態不適、暫停、退階、替換、疼痛」則依該標籤處理，不要硬補做
 
 ## 你的任務
 請提出 **剛好 3 個** 符合本次模組（${targetModule}）且適合該學員目標的「創意補充動作」：
@@ -707,7 +919,8 @@ ${libText}
 3. 遵守上述強度遞增規則來建議重量
 4. 必須參考「動作評價摘要」與手寫評語：不要只推薦新動作，要說明它是在進階、維持、補做 time out、降階、替換、或補強控制
 5. 若最近代償紀錄或手寫評語中有代償訊號，優先提出能喚醒/整合該肌群且不讓代償者搶工作的補充動作
-6. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
+6. 若手寫備註含決策標籤，務必依標籤處理；標籤優先順序高於單純評分
+7. 【極度重要】不准加任何解說文字，不要 markdown 格式，只准回覆以下格式的 JSON 陣列（剛好3個）：
 
 [
   {
@@ -926,17 +1139,29 @@ function generateAISuggestions(studentId) {
   if (sessionN2) {
     const plan = sessionN2.exercises.map(raw => {
       const e = withExerciseMeta(raw);
+      const decisionTags = parseDecisionTags(e.notes);
       // Push up 扶槓特殊處理
       let name = e.name;
-      const adjustedName = adjustPushUpBar(name, e.quality);
+      const adjustedName = shouldProgressFromQualityAndTags(e.quality, decisionTags) ? adjustPushUpBar(name, e.quality) : null;
       if (adjustedName) name = adjustedName;
 
       let cues = '';
-      if (isGoodQuality(e.quality)) cues = '上次品質優良，已依規則微幅加強';
+      if (hasAnyDecisionTag(decisionTags, ['pause'])) cues = '手寫標籤暫停/不要排';
+      else if (hasAnyDecisionTag(decisionTags, ['replace'])) cues = '手寫標籤替換';
+      else if (hasAnyDecisionTag(decisionTags, ['regress', 'lessLoad', 'pain'])) cues = '手寫標籤退階/減量/疼痛，先降階';
+      else if (hasAnyDecisionTag(decisionTags, ['condition'])) cues = '上次為當日狀態不適，不直接追重量';
+      else if (hasAnyDecisionTag(decisionTags, ['makeup', 'timeShort'])) cues = '手寫標籤補做/時間不足，這次提早安排';
+      else if (isGoodQuality(e.quality)) cues = '上次品質優良，已依規則微幅加強';
       else if (isNeedsWorkQuality(e.quality)) cues = '上次品質需改善，先維持重量並注意動作品質';
-      else if ((e.notes || '').toLowerCase().includes('time out')) cues = '上次 time out，建議保留休息與節奏空間';
+      else if (hasTimeOutNote(e.notes)) cues = '上次 time out 未標原因，請確認是時間不足或狀態不適';
+      else cues = 'N-2 同模組延續';
 
-      return buildPrepExerciseFromSession(e, { name, progress: true, cues });
+      return buildPrepExerciseFromSession(e, {
+        name,
+        progress: shouldProgressFromQualityAndTags(e.quality, decisionTags),
+        cues,
+        reason: cues
+      });
     });
 
     // ── 規則 3：從 N-1 補入 N-2/N-3/N-4 都沒出現過的動作 ──
@@ -952,21 +1177,24 @@ function generateAISuggestions(studentId) {
         && !alreadyInPlan.has(e.name)
       );
 
-      // 優先排序：time out / 需改善的排前面
+      // 優先排序：補做/時間不足/需改善的排前面，狀態不適或暫停交給決策標籤處理
       uniqueFromN1.sort((a, b) => {
-        const aUrgent = hasTimeOutNote(a.notes)
-          || isNeedsWorkQuality(a.quality) ? 1 : 0;
-        const bUrgent = hasTimeOutNote(b.notes)
-          || isNeedsWorkQuality(b.quality) ? 1 : 0;
+        const aTags = parseDecisionTags(a.notes);
+        const bTags = parseDecisionTags(b.notes);
+        const aUrgent = hasAnyDecisionTag(aTags, ['makeup', 'timeShort']) || isNeedsWorkQuality(a.quality) ? 1 : 0;
+        const bUrgent = hasAnyDecisionTag(bTags, ['makeup', 'timeShort']) || isNeedsWorkQuality(b.quality) ? 1 : 0;
         return bUrgent - aUrgent;
       });
 
       uniqueFromN1.slice(0, MAX_UNIQUE_CARRYOVER_EXERCISES).forEach(e => {
-        const isTimeout = hasTimeOutNote(e.notes);
+        const tags = parseDecisionTags(e.notes);
+        if (hasAnyDecisionTag(tags, ['pause'])) return;
+        const shouldMakeup = hasAnyDecisionTag(tags, ['makeup', 'timeShort']) || (hasTimeOutNote(e.notes) && !hasAnyDecisionTag(tags, ['condition', 'replace', 'regress', 'pain']));
         const needsWork = isNeedsWorkQuality(e.quality);
         plan.push(buildPrepExerciseFromSession(e, {
           progress: false,
-          cues: isTimeout ? '上次 time out 多半是時間不足，這次排入補做或提早安排' : needsWork ? '上次品質需改善' : 'N-1 獨有動作'
+          cues: shouldMakeup ? '上次標記補做/時間不足或 time out 未標原因，這次提早安排' : needsWork ? '上次品質需改善' : 'N-1 獨有動作',
+          reason: shouldMakeup ? 'N-1 補做/時間不足' : needsWork ? 'N-1 品質需改善補入' : 'N-1 獨有動作補入'
         }));
       });
     }
@@ -982,7 +1210,7 @@ function generateAISuggestions(studentId) {
     sessionN1.exercises.map(withExerciseMeta).forEach(e => {
       const cat = e.category || '';
       if (cat.includes('NKT') || cat.includes('核心') || cat.includes('暖身')) {
-        plan.push(buildPrepExerciseFromSession(e, { progress: false }));
+        plan.push(buildPrepExerciseFromSession(e, { progress: false, cues: '沿用上次暖身/核心準備', reason: '沿用上次暖身/核心準備' }));
       }
     });
     // 主訓練：N-1 的相反模組，從動作庫挑選
@@ -992,7 +1220,7 @@ function generateAISuggestions(studentId) {
       const available = exerciseLib.filter(e => e.category === cat);
       const shuffled = [...available].sort(() => Math.random() - 0.5);
       shuffled.slice(0, 2).forEach(e => {
-        plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: '' });
+        plan.push({ exerciseId: e.id, name: e.name, category: e.category, sets: 4, reps: '10', weight: '', cues: 'N-1 相反模組補足主訓練', planningReason: 'N-1 相反模組補足主訓練' });
       });
     });
     return finalizeGeneratedPlan(carryForwardTimeoutExercises(plan, sessionN1, exerciseLib), student, exerciseLib, compensationFindings, exerciseEvaluations);
@@ -1010,7 +1238,7 @@ function generateAISuggestions(studentId) {
       const isWarmup = cat === 'NKT評估' || cat === '核心控制';
       plan.push({
         exerciseId: e.id, name: e.name, category: e.category,
-        sets: isWarmup ? 2 : 4, reps: isWarmup ? '8' : '10', weight: isWarmup ? '-' : '', cues: ''
+        sets: isWarmup ? 2 : 4, reps: isWarmup ? '8' : '10', weight: isWarmup ? '-' : '', cues: '新學員首次備課均衡建立基準', planningReason: '新學員首次備課均衡建立基準'
       });
     });
   });
@@ -1018,6 +1246,15 @@ function generateAISuggestions(studentId) {
 }
 
 // ── Prep exercise row helpers ──
+function renderPlanningReason(ex) {
+  const reason = String(ex.planningReason || ex.cues || '').trim();
+  if (!reason) return '';
+  const compact = reason.split('；').map(item => item.trim()).filter(Boolean).slice(0, 3).join('；');
+  return `<div style="margin:6px 0 0 32px;padding:6px 8px;border-radius:8px;background:rgba(116,185,255,0.08);border:1px solid rgba(116,185,255,0.18);color:var(--text-secondary);font-size:0.72rem;line-height:1.45">
+        <span style="color:var(--info);font-weight:700">排課理由：</span>${compact}
+      </div>`;
+}
+
 function renderPrepExerciseRow(ex, idx, catIcons, catEmojis) {
   return `
     <div id="prep-ex-${idx}" draggable="true"
@@ -1049,6 +1286,7 @@ function renderPrepExerciseRow(ex, idx, catIcons, catEmojis) {
         <input type="number" min="1" value="${ss.sets||1}" placeholder="組" oninput="updateSubSet(${idx},${si},'sets',this.value)" style="width:38px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--text-primary);font-size:0.85rem;text-align:center;box-sizing:border-box">
         <button onclick="removeSubSet(${idx},${si})" style="background:none;border:none;color:var(--text-muted);font-size:0.9rem;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
       </div>`).join('')}
+      ${renderPlanningReason(ex)}
     </div>`;
 }
 
@@ -1306,7 +1544,7 @@ function renderPrep(studentId) {
           </div>
           ${s.exercises.map(e => {
             const groups = getSessionExerciseGroups(e);
-            const qualIcon = isGoodQuality(e.quality) ? ':D' : e.quality === '尚可' ? ':|' : isNeedsWorkQuality(e.quality) ? ":'(" : '-';
+            const qualIcon = isGoodQuality(e.quality) ? '😀' : e.quality === '尚可' ? '😐' : isNeedsWorkQuality(e.quality) ? '😢' : '-';
             return groups.map((g, gi) => `
           <div style="display:flex;align-items:center;gap:4px;padding:${gi===0?'5':'2'}px 0;${gi===0?'border-top:1px solid var(--border);':''}font-size:0.78rem">
             <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${gi===0?e.name:''}</div>
@@ -1411,9 +1649,9 @@ function renderSession(studentId) {
   const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
   const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
   const qualities = [
-    { emoji:':D', label:'優良' },
-    { emoji:':|', label:'尚可' },
-    { emoji:":'(", label:'需改善' }
+    { emoji:'😀', label:'優良' },
+    { emoji:'😐', label:'尚可' },
+    { emoji:'😢', label:'需改善' }
   ];
   const conditionOptions = ['😴 疲勞','🤕 疼痛','💪 狀態佳','🤒 身體不適','😰 壓力大','🌙 睡眠不足'];
 
@@ -1460,7 +1698,7 @@ function renderSession(studentId) {
           </button>`).join('')}
       </div>
       <div class="quick-note mb-16">
-        <textarea id="exercise-note" placeholder="快速備註（如：第3組有代償）" oninput="updateExerciseNote(this.value)">${ex.notes}</textarea>
+        <textarea id="exercise-note" placeholder="快速備註（如：保留、退階、替換、補做、狀態不適、代償表）" oninput="updateExerciseNote(this.value)">${ex.notes}</textarea>
       </div>
     </div>
     ${state.currentExIdx === state.exercises.length - 1 ? `
