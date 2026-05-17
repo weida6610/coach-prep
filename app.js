@@ -5,6 +5,7 @@
 let navigationStack = [];
 let sessionTimerInterval = null;
 let sessionAutoSaveInterval = null;
+let modalReturnScrollPosition = null;
 
 // ============================================
 // Utilities
@@ -34,6 +35,20 @@ function getScrollPosition() {
   };
 }
 
+function rememberModalReturnScrollPosition() {
+  modalReturnScrollPosition = getScrollPosition();
+  return modalReturnScrollPosition;
+}
+
+function getModalReturnScrollPosition() {
+  return modalReturnScrollPosition || getScrollPosition();
+}
+
+function rememberCurrentRouteScrollPosition() {
+  const current = navigationStack[navigationStack.length - 1];
+  if (current) current.scrollPosition = getScrollPosition();
+}
+
 function restoreScrollPosition(position) {
   const pos = position || getScrollPosition();
   const content = document.getElementById('app-content');
@@ -59,14 +74,18 @@ function restoreScrollPosition(position) {
 // Navigation / Router
 // ============================================
 function navigate(view, param) {
+  rememberCurrentRouteScrollPosition();
   navigationStack.push({ view, param });
   renderView(view, param);
 }
 
 function goBack() {
   navigationStack.pop(); // current
-  const prev = navigationStack.pop();
-  if (prev) navigate(prev.view, prev.param);
+  const prev = navigationStack[navigationStack.length - 1];
+  if (prev) {
+    const scrollOptions = prev.scrollPosition ? { preserveScroll: true, ...prev.scrollPosition } : {};
+    renderView(prev.view, prev.param, scrollOptions);
+  }
   else navigate('dashboard');
 }
 
@@ -262,6 +281,7 @@ function saveEditSessionForm(sessionId) {
 }
 
 function addToScheduleModal() {
+  rememberModalReturnScrollPosition();
   const students = DB.getStudents();
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
@@ -291,10 +311,11 @@ function saveScheduleItemModal() {
   const type = document.getElementById('sch-type').value;
   const hour = parseInt(time.split(':')[0]);
   const period = hour < 12 ? 'AM' : 'PM';
+  const scrollPosition = getModalReturnScrollPosition();
   DB.saveScheduleItem({ date: getTodayStr(), studentId, time, period, type, status: 'pending' });
   closeModal();
   showToast('✅ 已加入今日課程');
-  navigate('dashboard');
+  renderView('dashboard', undefined, { preserveScroll: true, ...scrollPosition });
 }
 
 function syncCalendarNow() {
@@ -429,6 +450,7 @@ function removePrepExercise(idx) {
 }
 
 function showExercisePicker(studentId) {
+  rememberModalReturnScrollPosition();
   const exercises = DB.getExercises();
   const catEmojis = { 'NKT評估':'🔬', '核心控制':'🎯', '上肢推':'💪', '上肢拉':'🏋️', '下肢推':'🦵', '下肢拉':'🍑', '心肺':'❤️', '全身':'⚡' };
   const catIcons  = { 'NKT評估':'nkt', '核心控制':'core', '上肢推':'push', '上肢拉':'pull', '下肢推':'lower-push', '下肢拉':'lower-pull', '心肺':'cardio', '全身':'full' };
@@ -506,7 +528,7 @@ window.saveInlineNewExercise = function(studentId) {
     exerciseId: ex.id, name: ex.name, category: ex.category,
     sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', cues: ex.cues || ''
   });
-  const scrollPosition = getScrollPosition();
+  const scrollPosition = getModalReturnScrollPosition();
   closeModal();
   showToast(`✅ 「${ex.name}」已加入資料庫與課表`);
   refreshPrepAfterAdd(studentId, scrollPosition);
@@ -525,7 +547,7 @@ function addExerciseToPrep(exerciseId, studentId) {
       exerciseId: ex.id, name: ex.name, category: ex.category,
       sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', cues: ex.cues || ''
     });
-    const scrollPosition = getScrollPosition();
+    const scrollPosition = getModalReturnScrollPosition();
     closeModal();
     showToast(`✅ 已加入 ${ex.name}`);
     refreshPrepAfterAdd(studentId, scrollPosition);
