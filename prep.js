@@ -1788,6 +1788,7 @@ function savePrepPlan(studentId) {
 }
 
 function showSessionAddExercise() {
+  if (typeof rememberModalReturnScrollPosition === 'function') rememberModalReturnScrollPosition();
   const exercises = DB.getExercises();
   const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
   const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
@@ -1816,7 +1817,9 @@ function showSessionAddExercise() {
 function addLibExerciseToSession(exerciseId) {
   const ex = DB.getExercises().find(e => e.id === exerciseId);
   if (!ex || !currentSessionState) return;
-  const scrollPosition = typeof getScrollPosition === 'function' ? getScrollPosition() : null;
+  const scrollPosition = typeof getModalReturnScrollPosition === 'function'
+    ? getModalReturnScrollPosition()
+    : (typeof getScrollPosition === 'function' ? getScrollPosition() : null);
   const allSets = Array.from({ length: ex.defaultSets }, () => ({ reps: ex.defaultReps, weight: '' }));
   const newEx = {
     exerciseId: ex.id, name: ex.name, category: ex.category,
@@ -2046,6 +2049,7 @@ function _renderEditSetsModal(exName, modalScrollTop = null) {
 
 window.showEditSessionExercise = function() {
   if (!currentSessionState) return;
+  if (typeof rememberModalReturnScrollPosition === 'function') rememberModalReturnScrollPosition();
   const ex = currentSessionState.exercises[currentSessionState.currentExIdx];
   _editSets = ex.allSets.map(s => ({ weight: s.weight || '', reps: s.reps || ex.reps || '10' }));
   _renderEditSetsModal(ex.name);
@@ -2095,7 +2099,9 @@ window.applyEditSessionExercise = function() {
   ex.completedSets = new Array(ex.allSets.length).fill(false);
   ex.reps = ex.allSets[0]?.reps || ex.reps;
   ex.weight = ex.allSets[0]?.weight || '-';
-  const scrollPosition = typeof getScrollPosition === 'function' ? getScrollPosition() : null;
+  const scrollPosition = typeof getModalReturnScrollPosition === 'function'
+    ? getModalReturnScrollPosition()
+    : (typeof getScrollPosition === 'function' ? getScrollPosition() : null);
   closeModal();
   renderView('session', currentSessionState.studentId, { preserveScroll: true, ...(scrollPosition || {}) });
 };
