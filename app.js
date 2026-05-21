@@ -29,9 +29,12 @@ function showToast(msg) {
 
 function getScrollPosition() {
   const content = document.getElementById('app-content');
+  const lockedBodyTop = document.body.style.position === 'fixed'
+    ? Math.abs(parseFloat(document.body.style.top || '0')) || 0
+    : null;
   return {
     contentScrollTop: content ? content.scrollTop : 0,
-    windowScrollY: window.scrollY || window.pageYOffset || 0
+    windowScrollY: lockedBodyTop ?? (window.scrollY || window.pageYOffset || 0)
   };
 }
 
@@ -63,11 +66,11 @@ function restoreScrollPosition(position) {
 
   apply();
   requestAnimationFrame(apply);
-  setTimeout(apply, 0);
+  [0, 80, 160, 320].forEach(delay => setTimeout(apply, delay));
   setTimeout(() => {
     apply();
     html.style.scrollBehavior = previousBehavior;
-  }, 80);
+  }, 360);
 }
 
 // ============================================
