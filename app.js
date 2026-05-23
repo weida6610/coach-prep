@@ -34,8 +34,32 @@ function getScrollPosition() {
     : null;
   return {
     contentScrollTop: content ? content.scrollTop : 0,
-    windowScrollY: lockedBodyTop ?? (window.scrollY || window.pageYOffset || 0)
+    windowScrollY: lockedBodyTop ?? (window.scrollY || window.pageYOffset || 0),
+    anchor: getVisiblePrepAnchor()
   };
+}
+
+function getVisiblePrepAnchor() {
+  const anchorCandidates = document.querySelectorAll('[id^="prep-ex-"], #prep-add-exercise-btn, #prep-notes');
+  const viewportTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 60;
+  const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
+
+  for (const el of anchorCandidates) {
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > viewportTop + 8 && rect.top < viewportBottom - 8) {
+      return { id: el.id, top: rect.top };
+    }
+  }
+  return null;
+}
+
+function restoreVisibleAnchor(anchor) {
+  if (!anchor?.id) return false;
+  const el = document.getElementById(anchor.id);
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  window.scrollTo(0, (window.scrollY || window.pageYOffset || 0) + rect.top - anchor.top);
+  return true;
 }
 
 function rememberModalReturnScrollPosition() {
@@ -62,6 +86,7 @@ function restoreScrollPosition(position) {
   const apply = () => {
     if (content) content.scrollTop = pos.contentScrollTop || 0;
     window.scrollTo(0, pos.windowScrollY || 0);
+    restoreVisibleAnchor(pos.anchor);
   };
 
   apply();
