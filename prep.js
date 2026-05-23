@@ -1579,7 +1579,7 @@ function renderPrep(studentId) {
         <div style="font-size:0.72rem;color:var(--accent-secondary);font-weight:700;letter-spacing:0.05em;margin-bottom:8px">🧠 AI 自由發揮建議</div>
         ${currentPrepPlan.map((ex, idx) => ex.isFreeStyle ? renderPrepFreeItem(ex, idx, catIcons, catEmojis) : '').join('')}
       </div>` : ''}
-      <button class="btn-add-exercise" onclick="showExercisePicker('${studentId}')" style="margin-top:8px">+ 新增動作</button>
+      <button id="prep-add-exercise-btn" class="btn-add-exercise" onclick="showExercisePicker('${studentId}')" style="margin-top:8px">+ 新增動作</button>
     </div>
     <div class="prep-section">
       <div class="form-group">
