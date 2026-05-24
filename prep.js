@@ -1246,6 +1246,14 @@ function generateAISuggestions(studentId) {
 }
 
 // ── Prep exercise row helpers ──
+function getPrepCatIcons() {
+  return { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
+}
+
+function getPrepCatEmojis() {
+  return { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
+}
+
 function renderPlanningReason(ex) {
   const reason = String(ex.planningReason || ex.cues || '').trim();
   if (!reason) return '';
@@ -1288,6 +1296,20 @@ function renderPrepExerciseRow(ex, idx, catIcons, catEmojis) {
       </div>`).join('')}
       ${renderPlanningReason(ex)}
     </div>`;
+}
+
+function appendLatestPrepExerciseRow() {
+  const list = document.getElementById('prep-exercise-list');
+  if (!list || !currentPrepPlan?.length) return false;
+
+  const normalExercises = currentPrepPlan.filter(ex => !ex.isFreeStyle);
+  const idx = normalExercises.length - 1;
+  const ex = normalExercises[idx];
+  if (!ex || document.getElementById(`prep-ex-${idx}`)) return false;
+
+  list.insertAdjacentHTML('beforeend', renderPrepExerciseRow(ex, idx, getPrepCatIcons(), getPrepCatEmojis()));
+  if (typeof _initPrepTouchDrag === 'function') _initPrepTouchDrag();
+  return true;
 }
 
 function renderPrepFreeItem(ex, idx, catIcons, catEmojis) {
@@ -1573,7 +1595,9 @@ function renderPrep(studentId) {
         <div style="width:38px;text-align:center">組數</div>
         <div style="width:54px"></div>
       </div>
-      ${currentPrepPlan.filter(ex => !ex.isFreeStyle).map((ex, idx) => renderPrepExerciseRow(ex, idx, catIcons, catEmojis)).join('')}
+      <div id="prep-exercise-list">
+        ${currentPrepPlan.filter(ex => !ex.isFreeStyle).map((ex, idx) => renderPrepExerciseRow(ex, idx, catIcons, catEmojis)).join('')}
+      </div>
       ${currentPrepPlan.filter(ex => ex.isFreeStyle).length > 0 ? `
       <div style="margin-top:16px;padding:10px 8px 6px;border-radius:var(--radius-md);background:linear-gradient(135deg,rgba(108,92,231,0.12),rgba(0,229,160,0.08));border:1px solid rgba(108,92,231,0.3)">
         <div style="font-size:0.72rem;color:var(--accent-secondary);font-weight:700;letter-spacing:0.05em;margin-bottom:8px">🧠 AI 自由發揮建議</div>
@@ -1965,6 +1989,8 @@ let _tdIdx = null;
 
 function _initPrepTouchDrag() {
   document.querySelectorAll('.prep-drag-handle').forEach(handle => {
+    if (handle.dataset.touchDragBound === '1') return;
+    handle.dataset.touchDragBound = '1';
     handle.addEventListener('touchstart', e => {
       _tdIdx = parseInt(handle.dataset.idx);
       const el = document.getElementById(`prep-ex-${_tdIdx}`);
