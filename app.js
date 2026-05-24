@@ -534,6 +534,10 @@ function showInlineNewExercise(studentId) {
 function refreshPrepAfterAdd(studentId, scrollPosition = getScrollPosition()) {
   const notes = document.getElementById('prep-notes')?.value || '';
   if (currentPrepPlan) currentPrepPlan._prepNotes = notes;
+  if (typeof appendLatestPrepExerciseRow === 'function' && appendLatestPrepExerciseRow()) {
+    restoreScrollPosition(scrollPosition);
+    return;
+  }
   if (typeof rerenderCurrentViewPreserveScroll === 'function') {
     rerenderCurrentViewPreserveScroll(scrollPosition);
   } else {
