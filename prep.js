@@ -339,7 +339,7 @@ function parseCompensationNotes(notes) {
       const compensator = cleanCompensatorPart(parts[i]);
       const inhibited = cleanCompensationPart(parts[i + 1]);
       if (compensator && inhibited) {
-        const finding = { compensator, inhibited };
+        const finding = { compensator, inhibited, rawText: clause };
         findings.push({ ...finding, key: compensationFindingKey(finding) });
       }
     }
@@ -371,7 +371,7 @@ function collectCompensationFindings(sessions, limit = 5, options = {}) {
 function formatCompensationFindings(findings) {
   if (!findings || !findings.length) return '無明確代償紀錄';
   return findings.slice(0, 8)
-    .map(f => `- ${f.date || '未註明日期'}｜${f.exerciseName || '未註明動作'}：${f.compensator} 代償 ${f.inhibited}`)
+    .map(f => `- ${f.date || '未註明日期'}｜${f.exerciseName || '未註明動作'}：${f.rawText || `${f.compensator} 代償 ${f.inhibited}`}`)
     .join('\n');
 }
 
@@ -1529,7 +1529,7 @@ function renderPrep(studentId) {
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
               <div style="min-width:0">
                 <span style="color:var(--text-muted)">${(f.date || '').slice(5) || '--'}｜${f.exerciseName || '動作'}</span><br>
-                <strong style="color:var(--danger)">${f.compensator}</strong> 代償 <strong style="color:var(--accent)">${f.inhibited}</strong>
+                <span>${escapeHtmlAttr(f.rawText || `${f.compensator} 代償 ${f.inhibited}`)}</span>
               </div>
               <button type="button"
                 data-session-id="${escapeHtmlAttr(f.sessionId)}"
