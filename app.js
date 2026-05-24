@@ -477,6 +477,63 @@ function removePrepExercise(idx) {
   renderView(curr.view, curr.param, { preserveScroll: true });
 }
 
+function escapeHtmlValue(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function formatExerciseUsageGroups(ex) {
+  const groups = typeof getSessionExerciseGroups === 'function'
+    ? getSessionExerciseGroups(ex).filter(g => g.count > 0)
+    : [];
+  const fallbackGroups = groups.length ? groups : [{
+    weight: ex.weight && ex.weight !== '-' ? ex.weight : '',
+    reps: ex.reps || '10',
+    count: parseInt(ex.sets) || 1
+  }];
+
+  return fallbackGroups
+    .map(g => `${g.weight ? `${g.weight}×` : ''}${g.reps || '?'}×${g.count}組`)
+    .join(' / ');
+}
+
+function findSessionScheduleTime(session) {
+  const schedule = typeof DB?.getSchedule === 'function' ? DB.getSchedule() : [];
+  const item = schedule.find(s => s.studentId === session.studentId && s.date === session.date);
+  return item?.time || '';
+}
+
+function findLatestExerciseUsage(studentId, exercise) {
+  if (!studentId || !exercise) return null;
+  const exerciseKey = normalizeExerciseName(exercise.name);
+  const sessions = DB.getSessions(studentId);
+  for (const session of sessions) {
+    const matched = (session.exercises || []).find(ex => {
+      if (exercise.id && ex.exerciseId && ex.exerciseId === exercise.id) return true;
+      return normalizeExerciseName(ex.name) === exerciseKey;
+    });
+    if (matched) return { session, exercise: matched };
+  }
+  return null;
+}
+
+function renderLatestExerciseUsage(studentId, exercise) {
+  const usage = findLatestExerciseUsage(studentId, exercise);
+  if (!usage) {
+    return '<div class="exercise-last-usage empty">尚無此學員操作紀錄</div>';
+  }
+
+  const { session, exercise: used } = usage;
+  const dateTime = [session.date, findSessionScheduleTime(session)].filter(Boolean).join(' ');
+  const groups = formatExerciseUsageGroups(used);
+  const quality = used.quality ? `｜品質：${used.quality}` : '';
+  return `<div class="exercise-last-usage">最近 ${escapeHtmlValue(dateTime || '未註明日期')}｜${escapeHtmlValue(groups)}${escapeHtmlValue(quality)}</div>`;
+}
+
 function showExercisePicker(studentId) {
   rememberModalReturnScrollPosition();
   const exercises = DB.getExercises();
@@ -504,6 +561,7 @@ function showExercisePicker(studentId) {
           <div class="exercise-lib-info">
             <div class="exercise-lib-name">${e.name}</div>
             <div class="exercise-lib-meta">${e.target} · ${e.defaultSets}×${e.defaultReps}</div>
+            ${renderLatestExerciseUsage(studentId, e)}
           </div>
         </div>`).join('')}
     </div>`;

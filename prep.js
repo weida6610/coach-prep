@@ -1948,6 +1948,7 @@ function showSessionAddExercise() {
           <div class="exercise-lib-info">
             <div class="exercise-lib-name">${e.name}</div>
             <div class="exercise-lib-meta">${e.target} · ${e.defaultSets}×${e.defaultReps}</div>
+            ${typeof renderLatestExerciseUsage === 'function' && currentSessionState?.studentId ? renderLatestExerciseUsage(currentSessionState.studentId, e) : ''}
           </div>
         </div>`).join('')}
     </div>`;

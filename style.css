@@ -1300,6 +1300,17 @@ select {
   color: var(--text-secondary);
 }
 
+.exercise-last-usage {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--accent);
+}
+
+.exercise-last-usage.empty {
+  color: var(--text-muted);
+}
+
 /* ============================================
    Form Styles
    ============================================ */
