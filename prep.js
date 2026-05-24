@@ -290,6 +290,12 @@ function cleanCompensationPart(text) {
     .trim();
 }
 
+function cleanCompensatorPart(text) {
+  const cleaned = cleanCompensationPart(text);
+  const segments = cleaned.split(/[:：]/).map(part => part.trim()).filter(Boolean);
+  return segments.length ? cleanCompensationPart(segments[segments.length - 1]) : cleaned;
+}
+
 function escapeHtmlAttr(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -330,7 +336,7 @@ function parseCompensationNotes(notes) {
   clauses.forEach(clause => {
     const parts = clause.split(/\s*代償\s*/);
     for (let i = 0; i < parts.length - 1; i++) {
-      const compensator = cleanCompensationPart(parts[i]);
+      const compensator = cleanCompensatorPart(parts[i]);
       const inhibited = cleanCompensationPart(parts[i + 1]);
       if (compensator && inhibited) {
         const finding = { compensator, inhibited };
