@@ -323,18 +323,21 @@ function removeResolvedCompensationCues(finding) {
 }
 
 function parseCompensationNotes(notes) {
-  const text = String(notes || '').replace(/\n/g, ' ');
+  const text = String(notes || '');
   const findings = [];
-  const re = /([^,，;；。／/]{1,40}?)\s*代償\s*([^,，;；。／/]{1,40})/g;
-  let match;
-  while ((match = re.exec(text)) !== null) {
-    const compensator = cleanCompensationPart(match[1]);
-    const inhibited = cleanCompensationPart(match[2]);
-    if (compensator && inhibited) {
-      const finding = { compensator, inhibited };
-      findings.push({ ...finding, key: compensationFindingKey(finding) });
+  const clauses = text.split(/[\n,，;；。]+/).map(part => part.trim()).filter(Boolean);
+
+  clauses.forEach(clause => {
+    const parts = clause.split(/\s*代償\s*/);
+    for (let i = 0; i < parts.length - 1; i++) {
+      const compensator = cleanCompensationPart(parts[i]);
+      const inhibited = cleanCompensationPart(parts[i + 1]);
+      if (compensator && inhibited) {
+        const finding = { compensator, inhibited };
+        findings.push({ ...finding, key: compensationFindingKey(finding) });
+      }
     }
-  }
+  });
   return findings;
 }
 
