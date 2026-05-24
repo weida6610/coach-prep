@@ -694,6 +694,111 @@ function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
   return nextPlan;
 }
 
+function isMainTrainingCategory(category) {
+  return ['上肢推', '上肢拉', '下肢推', '下肢拉'].includes(category);
+}
+
+function sessionExerciseNameSet(session) {
+  return new Set((session?.exercises || []).map(ex => normalizeExerciseName(ex.name)));
+}
+
+function shouldKeepCopiedTemplateExercise(rawExercise) {
+  const tags = parseDecisionTags(rawExercise?.notes || '');
+  return hasAnyDecisionTag(tags, ['keep', 'makeup', 'timeShort', 'regress', 'lessLoad', 'pain', 'condition', 'control', 'activate'])
+    || isNeedsWorkQuality(rawExercise?.quality)
+    || hasTimeOutNote(rawExercise?.notes || '');
+}
+
+function movementFamilyTags(name) {
+  const text = String(name || '').toLowerCase();
+  const tags = [];
+  if (/row|划/.test(text)) tags.push('row');
+  if (/deadlift|\bdl\b|rdl/.test(text)) tags.push('deadlift');
+  if (/squat|深蹲/.test(text)) tags.push('squat');
+  if (/press|ohp|推舉/.test(text)) tags.push('press');
+  if (/push\s*up|伏地/.test(text)) tags.push('pushup');
+  if (/pull\s*up|chin\s*up/.test(text)) tags.push('pullup');
+  if (/lunge|rfess/.test(text)) tags.push('lunge');
+  if (/bridge|hip\s*thrust/.test(text)) tags.push('bridge');
+  return tags;
+}
+
+function recentMovementFamilies(recentNameSets) {
+  const families = new Set();
+  Object.values(recentNameSets).forEach(names => {
+    names.forEach(name => movementFamilyTags(name).forEach(tag => families.add(tag)));
+  });
+  return families;
+}
+
+function findTemplateVariation(ex, plan, recentNameSets, exerciseLib) {
+  const used = new Set(plan.map(item => normalizeExerciseName(item.name)));
+  const currentKey = normalizeExerciseName(ex.name);
+  const recentFamilies = recentMovementFamilies(recentNameSets);
+  return exerciseLib
+    .filter(item => item.category === ex.category)
+    .filter(item => {
+      const key = normalizeExerciseName(item.name);
+      return key && key !== currentKey && !used.has(key);
+    })
+    .map(item => {
+      const key = normalizeExerciseName(item.name);
+      let score = 0;
+      if (!recentNameSets.n1.has(key)) score += 4;
+      if (!recentNameSets.n2.has(key)) score += 3;
+      if (!recentNameSets.n3.has(key)) score += 2;
+      if (!recentNameSets.n4.has(key)) score += 1;
+      movementFamilyTags(item.name).forEach(tag => {
+        if (recentFamilies.has(tag)) score -= 3;
+      });
+      return { item, score };
+    })
+    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name))[0]?.item || null;
+}
+
+function diversifyN2TemplatePlan(plan, sessions, exerciseLib) {
+  const recentNameSets = {
+    n1: sessionExerciseNameSet(sessions.n1),
+    n2: sessionExerciseNameSet(sessions.n2),
+    n3: sessionExerciseNameSet(sessions.n3),
+    n4: sessionExerciseNameSet(sessions.n4)
+  };
+  const adjusted = plan.map(ex => ({ ...ex, subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : [] }));
+  const mainCount = adjusted.filter(ex => isMainTrainingCategory(ex.category)).length;
+  const maxReplacements = Math.min(3, Math.max(1, Math.floor(mainCount / 2)));
+  let replacements = 0;
+
+  adjusted.forEach((ex, idx) => {
+    if (replacements >= maxReplacements) return;
+    if (!isMainTrainingCategory(ex.category)) return;
+    const key = normalizeExerciseName(ex.name);
+    const copiedFromN2 = recentNameSets.n2.has(key);
+    const repeatedInN1 = recentNameSets.n1.has(key);
+    if (!copiedFromN2 || !repeatedInN1) return;
+    const rawN2 = (sessions.n2?.exercises || []).find(item => normalizeExerciseName(item.name) === key) || ex;
+    if (shouldKeepCopiedTemplateExercise(rawN2)) return;
+
+    const replacement = findTemplateVariation(ex, adjusted, recentNameSets, exerciseLib);
+    if (!replacement) return;
+    adjusted[idx] = {
+      ...ex,
+      exerciseId: replacement.id,
+      name: replacement.name,
+      category: replacement.category || ex.category,
+      target: replacement.target || '',
+      sets: replacement.defaultSets || ex.sets || 3,
+      reps: replacement.defaultReps || ex.reps || '10',
+      weight: '',
+      cues: '避免連續照抄近兩次課表，改用同類型變化',
+      planningReason: `N-2 同模組但避免重複：${ex.name} → ${replacement.name}`,
+      subSets: []
+    };
+    replacements++;
+  });
+
+  return adjusted;
+}
+
 function compactGeneratedPlan(plan) {
   const seen = new Set();
   return plan.filter(ex => {
@@ -917,7 +1022,7 @@ ${libText}
 ## 排課強度遞增規則（極重要）
 1. **DB（啞鈴）與 Machine（機械式）相關動作**：每次強度增加單位為 **2.5kg**；其餘所有動作增加單位為 **5kg**
 2. **Push up（扶槓）**：槓6 是多數學員的基準高度，數字代表架高高度，不是重量；數字越小越難。品質優良時依序進階：槓6 → 槓4 → 槓3 → 槓0 → 槓KB。不可把槓6當重量加5變成槓11，也不可產生槓7以上高度
-3. **動作選擇邏輯**：主課表以 N-2 為基底並視情況加強，但務必參酌 N-1 中「在 N-2、N-3、N-4 都沒出現過」的動作，以及手寫備註中提到的代償、疼痛、控制問題或調整建議
+3. **動作選擇邏輯**：主課表參考 N-2 的模組與訓練目的，但不要整份複製 N-2 或 N-1；若近兩次都反覆出現同一主訓練動作，除非手寫標籤要求保留/補做/退階/疼痛處理，否則請改用同類型變化動作
 4. **動作評價邏輯**：😀 優良 可以小幅進階或變化；😐 尚可 不要追求新奇，先穩定品質；😢 需改善 優先降階、簡化、替換或安排喚醒/控制練習
 5. **time out 邏輯**：time out 不一定等於時間不足；若手寫標籤有「補做」或「時間不足」才優先排入補做/提早安排；若有「狀態不適、暫停、退階、替換、疼痛」則依該標籤處理，不要硬補做
 
@@ -1146,7 +1251,7 @@ function generateAISuggestions(studentId) {
 
   // ── 情況 1：有 N-2 → 以 N-2 為模板（N 與 N-2 同模組）──
   if (sessionN2) {
-    const plan = sessionN2.exercises.map(raw => {
+    let plan = sessionN2.exercises.map(raw => {
       const e = withExerciseMeta(raw);
       const decisionTags = parseDecisionTags(e.notes);
       // Push up 扶槓特殊處理
@@ -1172,6 +1277,8 @@ function generateAISuggestions(studentId) {
         reason: cues
       });
     });
+
+    plan = diversifyN2TemplatePlan(plan, { n1: sessionN1, n2: sessionN2, n3: sessionN3, n4: sessionN4 }, exerciseLib);
 
     // ── 規則 3：從 N-1 補入 N-2/N-3/N-4 都沒出現過的動作 ──
     if (sessionN1) {
