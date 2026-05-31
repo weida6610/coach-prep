@@ -1492,7 +1492,7 @@ function renderBodyCheck(studentId) {
     </div>
     <div class="fade-in" style="margin:0 16px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px">
       <div>
-        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px">體脂機電話</div>
+        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px">學員電話</div>
         <div style="font-size:1rem;font-weight:700;color:var(--text-primary)">${student.phone ? escapeHtmlAttr(student.phone) : '尚未填寫'}</div>
       </div>
       ${student.phone ? `<a href="tel:${escapeHtmlAttr(student.phone)}" style="flex:0 0 auto;border:1px solid rgba(0,229,160,0.35);background:rgba(0,229,160,0.1);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:0.72rem;font-weight:700;text-decoration:none">撥號</a>` : ''}
