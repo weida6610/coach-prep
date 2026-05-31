@@ -1490,6 +1490,13 @@ function renderBodyCheck(studentId) {
         <div class="student-meta">上課前身體數據記錄</div>
       </div>
     </div>
+    <div class="fade-in" style="margin:0 16px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div>
+        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px">體脂機電話</div>
+        <div style="font-size:1rem;font-weight:700;color:var(--text-primary)">${student.phone ? escapeHtmlAttr(student.phone) : '尚未填寫'}</div>
+      </div>
+      ${student.phone ? `<a href="tel:${escapeHtmlAttr(student.phone)}" style="flex:0 0 auto;border:1px solid rgba(0,229,160,0.35);background:rgba(0,229,160,0.1);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:0.72rem;font-weight:700;text-decoration:none">撥號</a>` : ''}
+    </div>
     ${needsMeasure ? `
     <div class="fade-in" style="margin:0 16px 10px;background:rgba(255,107,107,0.12);border:1px solid var(--danger);border-radius:10px;padding:10px 12px;font-size:0.82rem;color:var(--danger)">
       ⚠️ 距離上次量測已 ${daysSinceLast} 天，建議今天記錄體脂數據
@@ -1994,6 +2001,16 @@ function renderAddStudent(studentId) {
         <div class="form-group">
           <label class="form-label">電話</label>
           <input type="tel" id="f-phone" value="${student?.phone || ''}" placeholder="0912-345-678">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">剩餘堂數</label>
+          <input type="number" id="f-remaining-course-sessions" value="${student?.remainingCourseSessions ?? ''}" placeholder="例如：8">
+        </div>
+        <div class="form-group">
+          <label class="form-label">總堂數</label>
+          <input type="number" id="f-total-course-sessions" value="${student?.totalCourseSessions ?? ''}" placeholder="例如：24">
         </div>
       </div>
       <div class="form-group">

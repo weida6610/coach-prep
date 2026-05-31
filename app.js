@@ -264,6 +264,12 @@ function filterStudents(query) {
   });
 }
 
+function readOptionalNonNegativeInt(inputId) {
+  const raw = document.getElementById(inputId)?.value.trim() || '';
+  if (raw === '') return '';
+  return Math.max(parseInt(raw, 10) || 0, 0);
+}
+
 function saveStudentForm(existingId) {
   const name = document.getElementById('f-name').value.trim();
   if (!name) { showToast('❌ 請輸入姓名'); return; }
@@ -272,6 +278,8 @@ function saveStudentForm(existingId) {
   student.name = name;
   student.age = parseInt(document.getElementById('f-age').value) || '';
   student.phone = document.getElementById('f-phone').value.trim();
+  student.remainingCourseSessions = readOptionalNonNegativeInt('f-remaining-course-sessions');
+  student.totalCourseSessions = readOptionalNonNegativeInt('f-total-course-sessions');
   student.goals = document.getElementById('f-goals').value.trim();
   student.medicalHistory = document.getElementById('f-medical').value.trim();
   student.nktFindings = document.getElementById('f-nkt').value.trim();
@@ -781,6 +789,27 @@ function saveSession() {
 
 const LINE_CHECKIN_URL = 'https://line.me/R/ti/p/@244ytefp';
 
+function renderSessionBalance(student) {
+  const remainingValue = parseInt(student?.remainingCourseSessions, 10);
+  const total = parseInt(student?.totalCourseSessions, 10);
+  const used = parseInt(student?.totalSessions, 10) || 0;
+  if ((!Number.isFinite(remainingValue) || remainingValue < 0) && (!Number.isFinite(total) || total <= 0)) {
+    return `
+      <div style="margin:10px 0 4px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);text-align:center">
+        <div style="font-size:0.72rem;color:var(--text-muted)">剩餘堂數 / 總堂數</div>
+        <div style="font-size:0.9rem;font-weight:700;color:var(--text-secondary);margin-top:2px">尚未設定堂數</div>
+      </div>`;
+  }
+  const remaining = Number.isFinite(remainingValue) && remainingValue >= 0 ? remainingValue : Math.max(total - used, 0);
+  const totalText = Number.isFinite(total) && total > 0 ? total : '--';
+  return `
+    <div style="margin:10px 0 4px;padding:10px 12px;border:1px solid rgba(0,229,160,0.28);border-radius:10px;background:rgba(0,229,160,0.08);text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-muted)">剩餘堂數 / 總堂數</div>
+      <div style="font-size:1.25rem;font-weight:800;color:var(--accent);margin-top:2px">${remaining} / ${totalText}</div>
+      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px">已完成 ${used} 堂</div>
+    </div>`;
+}
+
 function showCheckInQrModal(studentId) {
   const student = DB.getStudent(studentId);
   const now = new Date();
@@ -801,6 +830,7 @@ function showCheckInQrModal(studentId) {
         <div style="font-size:1.1rem;font-weight:700">${student?.name || ''}</div>
         <div style="font-size:0.8rem;color:var(--text-muted)">${getTodayStr()} ${timeStr}</div>
       </div>
+      ${renderSessionBalance(student)}
       ${qrHtml}
       <button class="btn-primary accent" onclick="finishSession()" style="margin-top:12px">✅ 簽到完成 · 回首頁</button>
       <button class="btn-primary secondary" onclick="finishSession()" style="margin-top:8px">略過 · 回首頁</button>

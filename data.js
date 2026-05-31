@@ -176,6 +176,10 @@ const DB = {
       const student = this._cache.students.find(s => s.id === session.studentId);
       if (student) {
         student.totalSessions = (student.totalSessions || 0) + 1;
+        const remaining = parseInt(student.remainingCourseSessions, 10);
+        if (Number.isFinite(remaining) && remaining > 0) {
+          student.remainingCourseSessions = remaining - 1;
+        }
         _fsdb.collection('students').doc(student.id).set(student);
       }
     }
@@ -193,6 +197,10 @@ const DB = {
     const student = this._cache.students.find(s => s.id === session.studentId);
     if (student && student.totalSessions > 0) {
       student.totalSessions--;
+      const remaining = parseInt(student.remainingCourseSessions, 10);
+      if (Number.isFinite(remaining)) {
+        student.remainingCourseSessions = remaining + 1;
+      }
       _fsdb.collection('students').doc(student.id).set(student);
     }
     // 同步刪除同日身體數據
