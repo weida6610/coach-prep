@@ -876,6 +876,7 @@ function closeActionSheet(e) {
 // ============================================
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
+    reg.update();
     // 每次 App 切回前景時，靜默檢查是否有新版本
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
