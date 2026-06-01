@@ -1481,6 +1481,10 @@ function renderBodyCheck(studentId) {
   const daysSinceLast = lastComposition ? Math.floor((new Date() - new Date(lastComposition.date)) / (1000*60*60*24)) : null;
   const needsMeasure = daysSinceLast !== null && daysSinceLast >= 28;
   const cellStyle = 'background:var(--bg-card);border-radius:10px;padding:10px 4px;text-align:center;min-height:86px;display:flex;flex-direction:column;justify-content:center';
+  const remainingSessions = parseInt(student.remainingCourseSessions, 10);
+  const totalSessions = parseInt(student.totalCourseSessions, 10);
+  const shouldRemindRenewal = Number.isFinite(remainingSessions) && remainingSessions <= 2;
+  const totalSessionsText = Number.isFinite(totalSessions) && totalSessions > 0 ? totalSessions : '--';
 
   return `
     <div class="prep-student-bar fade-in">
@@ -1495,8 +1499,11 @@ function renderBodyCheck(studentId) {
         <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px">學員電話</div>
         <div style="font-size:1rem;font-weight:700;color:var(--text-primary)">${student.phone ? escapeHtmlAttr(student.phone) : '尚未填寫'}</div>
       </div>
-      ${student.phone ? `<a href="tel:${escapeHtmlAttr(student.phone)}" style="flex:0 0 auto;border:1px solid rgba(0,229,160,0.35);background:rgba(0,229,160,0.1);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:0.72rem;font-weight:700;text-decoration:none">撥號</a>` : ''}
     </div>
+    ${shouldRemindRenewal ? `
+    <div class="fade-in" style="margin:0 16px 10px;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.55);border-radius:10px;padding:10px 12px;font-size:0.82rem;color:#fbbf24">
+      💬 剩餘 ${remainingSessions} / ${totalSessionsText} 堂，可以自然提醒學員續課安排
+    </div>` : ''}
     ${needsMeasure ? `
     <div class="fade-in" style="margin:0 16px 10px;background:rgba(255,107,107,0.12);border:1px solid var(--danger);border-radius:10px;padding:10px 12px;font-size:0.82rem;color:var(--danger)">
       ⚠️ 距離上次量測已 ${daysSinceLast} 天，建議今天記錄體脂數據
