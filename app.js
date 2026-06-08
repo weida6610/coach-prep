@@ -779,12 +779,21 @@ function saveSession() {
   const savedStudentId = state.studentId;
   DB.saveSession(session);
   DB.deletePrepPlan(state.studentId);
+  let nextPrepCount = 0;
+  try {
+    if (typeof prepareNextPrepPlanFromLatestSession === 'function') {
+      const nextPrep = prepareNextPrepPlanFromLatestSession(savedStudentId);
+      nextPrepCount = nextPrep?.exercises?.length || 0;
+    }
+  } catch (err) {
+    console.warn('下一堂自動備課失敗', err);
+  }
   localStorage.removeItem('session_draft');
   currentSessionState = null;
   currentPrepPlan = [];
   if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
   if (sessionAutoSaveInterval) { clearInterval(sessionAutoSaveInterval); sessionAutoSaveInterval = null; }
-  showToast('✅ 課程紀錄已儲存！');
+  showToast(nextPrepCount ? `✅ 課程已儲存，下一堂已準備 ${nextPrepCount} 個動作` : '✅ 課程紀錄已儲存！');
 
   // 顯示簽到 QR Code，點按鈕後才回首頁
   showCheckInQrModal(savedStudentId);

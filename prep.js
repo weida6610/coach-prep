@@ -1593,7 +1593,31 @@ function summarizeGeneratedPrepPlan(studentId, plan) {
 function createOneClickPrepDraft(studentId) {
   const exercises = clonePrepPlanForApply(generateAISuggestions(studentId));
   const notes = summarizeGeneratedPrepPlan(studentId, exercises);
-  return { studentId, exercises, notes, text: formatPrepPlanAsText(exercises, notes) };
+  return { studentId, exercises, notes, text: formatPrepPlanAsText(exercises, notes), generatedAt: Date.now() };
+}
+
+function renderOneClickDraftSetEditor(ex, idx) {
+  return `
+    <div style="display:flex;align-items:center;gap:4px;margin-top:7px">
+      <input value="${ex.weight && ex.weight !== '-' ? escapeHtmlAttr(ex.weight) : ''}" placeholder="重量" oninput="updateOneClickDraftExercise(${idx},'weight',this.value)" style="width:72px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+      <span style="color:var(--text-muted);font-size:0.72rem">x</span>
+      <input value="${escapeHtmlAttr(ex.reps || '')}" placeholder="次" oninput="updateOneClickDraftExercise(${idx},'reps',this.value)" style="width:56px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+      <span style="color:var(--text-muted);font-size:0.72rem">x</span>
+      <input type="number" min="1" value="${parseInt(ex.sets, 10) || 1}" placeholder="組" oninput="updateOneClickDraftExercise(${idx},'sets',this.value)" style="width:46px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+    </div>`;
+}
+
+function renderOneClickDraftSubSetEditor(ss, idx, subIdx) {
+  return `
+    <div style="display:flex;align-items:center;gap:4px;margin-top:5px;padding-left:18px">
+      <span style="color:var(--accent);font-size:0.7rem;width:10px;flex-shrink:0">↳</span>
+      <input value="${escapeHtmlAttr(ss.weight || '')}" placeholder="重量" oninput="updateOneClickDraftSubSet(${idx},${subIdx},'weight',this.value)" style="width:66px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+      <span style="color:var(--text-muted);font-size:0.72rem">x</span>
+      <input value="${escapeHtmlAttr(ss.reps || '')}" placeholder="次" oninput="updateOneClickDraftSubSet(${idx},${subIdx},'reps',this.value)" style="width:56px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+      <span style="color:var(--text-muted);font-size:0.72rem">x</span>
+      <input type="number" min="1" value="${parseInt(ss.sets, 10) || 1}" placeholder="組" oninput="updateOneClickDraftSubSet(${idx},${subIdx},'sets',this.value)" style="width:46px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:6px;color:var(--text-primary);font-size:0.82rem;text-align:center;box-sizing:border-box">
+      <button type="button" onclick="removeOneClickDraftSubSet(${idx},${subIdx})" style="background:none;border:none;color:var(--text-muted);font-size:0.9rem;padding:0 4px">✕</button>
+    </div>`;
 }
 
 function renderStructuredPrepDraft(exercises) {
@@ -1602,12 +1626,59 @@ function renderStructuredPrepDraft(exercises) {
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div style="width:22px;height:22px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;flex-shrink:0">${idx + 1}</div>
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.88rem;font-weight:800;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtmlAttr(ex.name)}</div>
-          <div style="font-size:0.76rem;color:var(--accent);margin-top:2px">${escapeHtmlAttr(formatPrepExerciseSpec(ex))}</div>
-          ${ex.cues || ex.planningReason ? `<div style="font-size:0.72rem;color:var(--text-secondary);line-height:1.45;margin-top:5px">${escapeHtmlAttr(ex.cues || ex.planningReason)}</div>` : ''}
+          <input value="${escapeHtmlAttr(ex.name)}" placeholder="動作名稱" oninput="updateOneClickDraftExercise(${idx},'name',this.value)" style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);padding:0 0 5px;color:var(--text-primary);font-size:0.9rem;font-weight:800;box-sizing:border-box">
+          ${renderOneClickDraftSetEditor(ex, idx)}
+          ${(ex.subSets || []).map((ss, subIdx) => renderOneClickDraftSubSetEditor(ss, idx, subIdx)).join('')}
+          <button type="button" onclick="addOneClickDraftSubSet(${idx})" style="margin-top:7px;border:1px dashed var(--border-light);background:transparent;color:var(--accent);border-radius:7px;padding:5px 8px;font-size:0.72rem;font-weight:700">+ 不同重量</button>
+          <textarea placeholder="提示／排課理由" oninput="updateOneClickDraftExercise(${idx},'cues',this.value)" style="width:100%;min-height:44px;margin-top:7px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:7px;padding:7px;color:var(--text-primary);font-size:0.76rem;line-height:1.45;box-sizing:border-box">${escapeHtmlAttr(ex.cues || ex.planningReason || '')}</textarea>
         </div>
       </div>
     </div>`).join('');
+}
+
+function rerenderOneClickStructuredPreview() {
+  const list = document.getElementById('one-click-structured-preview');
+  if (!list || !pendingOneClickPrepDraft) return;
+  list.innerHTML = renderStructuredPrepDraft(pendingOneClickPrepDraft.exercises);
+  const text = document.getElementById('one-click-prep-text');
+  if (text) text.value = formatPrepPlanAsText(pendingOneClickPrepDraft.exercises, pendingOneClickPrepDraft.notes);
+}
+
+function updateOneClickDraftExercise(idx, field, value) {
+  const ex = pendingOneClickPrepDraft?.exercises?.[idx];
+  if (!ex) return;
+  if (field === 'sets') ex[field] = parseInt(value, 10) || 1;
+  else {
+    ex[field] = value;
+    if (field === 'cues') ex.planningReason = value;
+  }
+  pendingOneClickPrepDraft.text = formatPrepPlanAsText(pendingOneClickPrepDraft.exercises, pendingOneClickPrepDraft.notes);
+  const text = document.getElementById('one-click-prep-text');
+  if (text && text.style.display !== 'none') text.value = pendingOneClickPrepDraft.text;
+}
+
+function updateOneClickDraftSubSet(idx, subIdx, field, value) {
+  const ss = pendingOneClickPrepDraft?.exercises?.[idx]?.subSets?.[subIdx];
+  if (!ss) return;
+  ss[field] = field === 'sets' ? (parseInt(value, 10) || 1) : value;
+  pendingOneClickPrepDraft.text = formatPrepPlanAsText(pendingOneClickPrepDraft.exercises, pendingOneClickPrepDraft.notes);
+  const text = document.getElementById('one-click-prep-text');
+  if (text && text.style.display !== 'none') text.value = pendingOneClickPrepDraft.text;
+}
+
+function addOneClickDraftSubSet(idx) {
+  const ex = pendingOneClickPrepDraft?.exercises?.[idx];
+  if (!ex) return;
+  if (!Array.isArray(ex.subSets)) ex.subSets = [];
+  ex.subSets.push({ weight: '', reps: ex.reps || '10', sets: parseInt(ex.sets, 10) || 1 });
+  rerenderOneClickStructuredPreview();
+}
+
+function removeOneClickDraftSubSet(idx, subIdx) {
+  const ex = pendingOneClickPrepDraft?.exercises?.[idx];
+  if (!ex?.subSets) return;
+  ex.subSets.splice(subIdx, 1);
+  rerenderOneClickStructuredPreview();
 }
 
 function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
@@ -1623,12 +1694,20 @@ function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
 
 function showOneClickPrepPreview(studentId) {
   pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+  renderOneClickPrepModal(studentId);
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function renderOneClickPrepModal(studentId) {
+  const generatedTime = pendingOneClickPrepDraft?.generatedAt
+    ? new Date(pendingOneClickPrepDraft.generatedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '';
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">一鍵備課預覽</div></div>
     <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-        <div style="font-size:0.78rem;color:var(--text-secondary)">共 ${pendingOneClickPrepDraft.exercises.length} 個動作，套用時會完整寫入備課列</div>
+        <div style="font-size:0.78rem;color:var(--text-secondary)">共 ${pendingOneClickPrepDraft.exercises.length} 個動作${generatedTime ? ` · ${generatedTime}` : ''}，可修正後直接套用</div>
         <button type="button" onclick="toggleOneClickTextPreview()" style="border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);border-radius:8px;padding:5px 8px;font-size:0.72rem;font-weight:700">文字版</button>
       </div>
       <div id="one-click-structured-preview" style="display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow-y:auto">
@@ -1636,12 +1715,17 @@ function showOneClickPrepPreview(studentId) {
       </div>
       <textarea id="one-click-prep-text" class="form-input" readonly style="display:none;min-height:240px;font-family:monospace;font-size:0.76rem;line-height:1.5">${escapeHtmlAttr(pendingOneClickPrepDraft.text)}</textarea>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <button class="btn-primary secondary" onclick="showOneClickPrepPreview('${studentId}')">重新產出</button>
+        <button class="btn-primary secondary" onclick="regenerateOneClickPrepDraft('${studentId}')">重新產出</button>
         <button class="btn-primary secondary" onclick="applyOneClickPrepDraft('${studentId}', false)">套用</button>
       </div>
       <button class="btn-primary accent" onclick="applyOneClickPrepDraft('${studentId}', true)">套用並儲存</button>
     </div>`;
-  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function regenerateOneClickPrepDraft(studentId) {
+  pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+  renderOneClickPrepModal(studentId);
+  showToast('✅ 已重新產出一鍵備課草稿');
 }
 
 function toggleOneClickTextPreview() {
@@ -1649,6 +1733,9 @@ function toggleOneClickTextPreview() {
   const text = document.getElementById('one-click-prep-text');
   if (!list || !text) return;
   const showingText = text.style.display !== 'none';
+  if (!showingText && pendingOneClickPrepDraft) {
+    text.value = formatPrepPlanAsText(pendingOneClickPrepDraft.exercises, pendingOneClickPrepDraft.notes);
+  }
   text.style.display = showingText ? 'none' : 'block';
   list.style.display = showingText ? 'flex' : 'none';
 }
@@ -1661,6 +1748,16 @@ function applyOneClickPrepDraft(studentId, save) {
     return;
   }
   applyPrepPlanDraft(studentId, exercises, notes, save);
+}
+
+function prepareNextPrepPlanFromLatestSession(studentId) {
+  const exercises = clonePrepPlanForApply(generateAISuggestions(studentId));
+  const notes = [
+    '系統自動準備下一堂課表',
+    summarizeGeneratedPrepPlan(studentId, exercises)
+  ].join('\n');
+  DB.savePrepPlan(studentId, { exercises, notes });
+  return { exercises, notes };
 }
 
 function showTextPlanImportModal(studentId) {
