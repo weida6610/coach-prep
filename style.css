@@ -937,6 +937,36 @@ select {
   background: var(--accent-dim);
 }
 
+.prep-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.prep-tool-btn {
+  min-height: 38px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  transition: all 0.2s;
+}
+
+.prep-tool-btn.primary {
+  border-color: rgba(0, 229, 160, 0.35);
+  background: rgba(0, 229, 160, 0.1);
+  color: var(--accent);
+}
+
+.prep-tool-btn:active {
+  transform: scale(0.97);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Floating Action */
 .floating-actions {
   position: fixed;
@@ -1388,6 +1418,12 @@ select {
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+.modal-overlay.active .modal-content,
+.action-sheet.active .action-sheet-content {
+  animation: none;
+  transform: translateY(0);
 }
 
 .modal-handle {

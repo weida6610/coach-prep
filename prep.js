@@ -7,6 +7,8 @@ let currentPrepPlan = [];
 let currentSessionState = null;
 let geminiLoading = false;
 let historyPanelCollapsed = false;
+let pendingOneClickPrepDraft = null;
+let pendingImportedTextPlan = null;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
 const PUSH_UP_BAR_SEQUENCE = ['槓6', '槓4', '槓3', '槓0', '槓KB'];
@@ -1386,6 +1388,298 @@ function generateAISuggestions(studentId) {
   return finalizeGeneratedPlan(plan, student, exerciseLib, compensationFindings, exerciseEvaluations);
 }
 
+// ── One-click prep and text import/export helpers ──
+function clonePrepPlanForApply(plan) {
+  return (plan || []).filter(ex => !ex.isFreeStyle).map(ex => ({
+    ...ex,
+    subSets: ex.subSets ? ex.subSets.map(ss => ({ ...ss })) : []
+  }));
+}
+
+function prepExerciseGroupsForText(ex) {
+  const groups = [{
+    weight: ex.weight && ex.weight !== '-' ? ex.weight : '',
+    reps: ex.reps || '10',
+    sets: parseInt(ex.sets, 10) || 1
+  }];
+  (ex.subSets || []).forEach(ss => {
+    groups.push({
+      weight: ss.weight || '',
+      reps: ss.reps || ex.reps || '10',
+      sets: parseInt(ss.sets, 10) || 1
+    });
+  });
+  return groups;
+}
+
+function formatPrepExerciseSpec(ex) {
+  return prepExerciseGroupsForText(ex)
+    .map(group => `${group.weight || '-'} × ${group.reps || '-'} × ${group.sets}`)
+    .join('；');
+}
+
+function formatPrepPlanAsText(plan, notes = '') {
+  const rows = clonePrepPlanForApply(plan).map((ex, idx) =>
+    `| ${idx + 1} | ${ex.name} | ${formatPrepExerciseSpec(ex)} | ${ex.cues || ex.planningReason || ''} |`
+  );
+  return [
+    '| 順序 | 動作 | 重量／次數／組數 | 提示 |',
+    '|---|---|---|---|',
+    ...rows,
+    notes ? `\n備註：${notes}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+function findExerciseLibraryMatchByName(name) {
+  const key = normalizeExerciseName(name);
+  return DB.getExercises().find(ex => normalizeExerciseName(ex.name) === key)
+    || DB.getExercises().find(ex => key && normalizeExerciseName(ex.name).includes(key))
+    || null;
+}
+
+function inferExerciseCategoryFromText(name, spec = '') {
+  const text = `${name} ${spec}`.toLowerCase();
+  if (text.includes('perturbation') || text.includes('test') || text.includes('棘上肌控制')) return 'NKT評估';
+  if (text.includes('dead bug') || text.includes('reverse crunch') || text.includes('核心')) return '核心控制';
+  if (text.includes('push') || text.includes('bench') || text.includes('bottom up') || text.includes('上肢推')) return '上肢推';
+  if (text.includes('row') || text.includes('chin') || text.includes('pull') || text.includes('raise') || text.includes('上肢拉')) return '上肢拉';
+  if (text.includes('squat') || text.includes('rfess') || text.includes('lunge') || text.includes('下肢推')) return '下肢推';
+  if (text.includes('dl') || text.includes('rdl') || text.includes('hinge') || text.includes('下肢拉')) return '下肢拉';
+  if (text.includes('bike') || text.includes('rpm') || text.includes('心肺')) return '心肺';
+  if (text.includes('3d map') || text.includes('map')) return '全身';
+  return '全身';
+}
+
+function splitPlanSpecSegments(spec) {
+  return String(spec || '')
+    .split(/[；;]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parsePlanSpecSegment(segment, exerciseName = '') {
+  const text = String(segment || '').trim();
+  if (!text) return null;
+
+  const normalized = text.replace(/[＊*]/g, '×').replace(/\s*x\s*/gi, ' × ');
+  const triple = normalized.match(/^(.*?)\s*[×]\s*([^×]+?)\s*[×]\s*(\d+)\s*(?:組|sets?)?$/i);
+  if (triple) {
+    return {
+      weight: triple[1].trim() === '-' ? '' : triple[1].trim(),
+      reps: triple[2].trim(),
+      sets: parseInt(triple[3], 10) || 1,
+      cue: ''
+    };
+  }
+
+  const setFirst = normalized.match(/^(\d+)\s*(?:組|sets?)\s*[×]\s*(.+)$/i);
+  if (setFirst) {
+    return { weight: '', reps: setFirst[2].trim(), sets: parseInt(setFirst[1], 10) || 1, cue: '' };
+  }
+
+  if (/bike|rpm|分鐘|min/i.test(`${exerciseName} ${text}`)) {
+    const minutes = text.match(/(\d+(?:\.\d+)?)\s*(?:分鐘|min)/i);
+    const rpm = text.match(/(\d+\s*[-–~]\s*\d+\s*RPM|\d+\s*RPM)/i);
+    return {
+      weight: rpm ? rpm[1].replace(/\s+/g, ' ') : '',
+      reps: minutes ? `${minutes[1]}分鐘` : text,
+      sets: 1,
+      cue: ''
+    };
+  }
+
+  if (/test|quick check|複測|檢查/i.test(text) || /perturbation/i.test(exerciseName)) {
+    return { weight: text === '-' ? '' : text, reps: 'test', sets: 1, cue: text };
+  }
+
+  return { weight: '', reps: text, sets: 1, cue: text };
+}
+
+function parsePlanSpecToExerciseFields(name, spec) {
+  const segments = splitPlanSpecSegments(spec);
+  const parsed = segments.map(segment => parsePlanSpecSegment(segment, name)).filter(Boolean);
+  if (!parsed.length) {
+    const fallback = parsePlanSpecSegment(spec || '10', name) || { weight: '', reps: '10', sets: 1, cue: '' };
+    parsed.push(fallback);
+  }
+  const primary = parsed[0];
+  return {
+    sets: primary.sets || 1,
+    reps: primary.reps || '10',
+    weight: primary.weight || '-',
+    subSets: parsed.slice(1).map(item => ({
+      weight: item.weight || '',
+      reps: item.reps || primary.reps || '10',
+      sets: item.sets || 1
+    })),
+    cueText: parsed.map(item => item.cue).filter(Boolean).join('；')
+  };
+}
+
+function createPrepExerciseFromTextRow(name, spec, cue = '') {
+  const cleanName = normalizePushUpBarName(String(name || '').trim());
+  if (!cleanName) return null;
+  const lib = findExerciseLibraryMatchByName(cleanName);
+  const parsed = parsePlanSpecToExerciseFields(cleanName, spec);
+  const cues = [cue, parsed.cueText].map(item => String(item || '').trim()).filter(Boolean).join('；');
+  return {
+    exerciseId: lib?.id || `TXT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: cleanName,
+    category: lib?.category || inferExerciseCategoryFromText(cleanName, spec),
+    target: lib?.target || '',
+    sets: parsed.sets,
+    reps: parsed.reps,
+    weight: parsed.weight || '-',
+    cues,
+    planningReason: cues || '文字課表匯入',
+    subSets: parsed.subSets
+  };
+}
+
+function parseMarkdownPlanRow(line) {
+  const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+  if (cells.length < 2) return null;
+  if (/^[-:]+$/.test(cells.join(''))) return null;
+  if (/順序|動作|重量/.test(cells.join(''))) return null;
+  const hasOrder = /^\d+$/.test(cells[0]);
+  const name = hasOrder ? cells[1] : cells[0];
+  const spec = hasOrder ? cells[2] : cells[1];
+  const cue = hasOrder ? cells.slice(3).join('；') : cells.slice(2).join('；');
+  return createPrepExerciseFromTextRow(name, spec, cue);
+}
+
+function parsePlainPlanRow(line) {
+  const cleaned = line.replace(/^\s*\d+\s*[.)、]\s*/, '').trim();
+  if (!cleaned || /^(備註|note|notes)[:：]/i.test(cleaned)) return null;
+  const parts = cleaned.split(/[|｜]/).map(item => item.trim()).filter(Boolean);
+  if (parts.length >= 2) return createPrepExerciseFromTextRow(parts[0], parts[1], parts.slice(2).join('；'));
+
+  const dashParts = cleaned.split(/\s[-–]\s/).map(item => item.trim()).filter(Boolean);
+  if (dashParts.length >= 2) return createPrepExerciseFromTextRow(dashParts[0], dashParts[1], dashParts.slice(2).join('；'));
+  return null;
+}
+
+function parseWorkoutPlanText(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const exercises = [];
+  const notes = [];
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (/^(備註|note|notes)[:：]/i.test(trimmed)) {
+      notes.push(trimmed.replace(/^(備註|note|notes)[:：]\s*/i, ''));
+      return;
+    }
+    const parsed = trimmed.includes('|') ? parseMarkdownPlanRow(trimmed) : parsePlainPlanRow(trimmed);
+    if (parsed) exercises.push(parsed);
+  });
+  return { exercises, notes: notes.join('\n') };
+}
+
+function summarizeGeneratedPrepPlan(studentId, plan) {
+  const student = DB.getStudent(studentId);
+  const sessions = DB.getSessions(studentId);
+  const lastSession = sessions[0];
+  const names = clonePrepPlanForApply(plan).map(ex => ex.name).join(' -> ');
+  return [
+    `${student?.name || '學員'}｜一鍵備課草稿`,
+    lastSession ? `參考最近一堂：${lastSession.date}${lastSession.coachNotes ? `｜${lastSession.coachNotes}` : ''}` : '尚無歷史紀錄，使用動作庫打底',
+    `課表順序：${names}`
+  ].join('\n');
+}
+
+function createOneClickPrepDraft(studentId) {
+  const exercises = clonePrepPlanForApply(generateAISuggestions(studentId));
+  const notes = summarizeGeneratedPrepPlan(studentId, exercises);
+  return { studentId, exercises, notes, text: formatPrepPlanAsText(exercises, notes) };
+}
+
+function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
+  const applied = clonePrepPlanForApply(exercises);
+  applied.studentId = studentId;
+  applied._prepNotes = notes;
+  currentPrepPlan = setPrepBaseline(applied);
+  if (save) DB.savePrepPlan(studentId, { exercises: applied.map(e => ({ ...e })), notes });
+  closeModal();
+  rerenderCurrentViewPreserveScroll();
+  showToast(save ? '✅ 課表已套用並儲存' : '✅ 課表已套用，可再微調後儲存');
+}
+
+function showOneClickPrepPreview(studentId) {
+  pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">一鍵備課預覽</div></div>
+    <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
+      <textarea id="one-click-prep-text" class="form-input" style="min-height:280px;font-family:monospace;font-size:0.76rem;line-height:1.5">${escapeHtmlAttr(pendingOneClickPrepDraft.text)}</textarea>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="btn-primary secondary" onclick="showOneClickPrepPreview('${studentId}')">重新產出</button>
+        <button class="btn-primary secondary" onclick="applyEditedOneClickPrep('${studentId}', false)">套用</button>
+      </div>
+      <button class="btn-primary accent" onclick="applyEditedOneClickPrep('${studentId}', true)">套用並儲存</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function applyEditedOneClickPrep(studentId, save) {
+  const text = document.getElementById('one-click-prep-text')?.value || '';
+  const parsed = parseWorkoutPlanText(text);
+  const exercises = parsed.exercises.length ? parsed.exercises : pendingOneClickPrepDraft?.exercises || [];
+  const notes = parsed.notes || pendingOneClickPrepDraft?.notes || '';
+  if (!exercises.length) {
+    showToast('❌ 沒有可套用的課表內容');
+    return;
+  }
+  applyPrepPlanDraft(studentId, exercises, notes, save);
+}
+
+function showTextPlanImportModal(studentId) {
+  pendingImportedTextPlan = null;
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">貼上文字課表</div></div>
+    <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
+      <textarea id="plan-import-text" class="form-input" style="min-height:220px;font-size:0.82rem;line-height:1.5"
+        placeholder="可貼 Markdown 表格，或例如：&#10;1. Dead Bug｜呼吸控制 × 10 × 2&#10;2. Trap Bar DL｜40kg × 6 × 1；60kg × 4 × 2"
+        oninput="updatePlanImportPreview()"></textarea>
+      <div id="plan-import-preview" style="min-height:42px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);color:var(--text-muted);font-size:0.78rem;line-height:1.5">
+        貼上後會在這裡預覽解析結果
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="btn-primary secondary" onclick="applyImportedTextPlan('${studentId}', false)">套用</button>
+        <button class="btn-primary accent" onclick="applyImportedTextPlan('${studentId}', true)">套用並儲存</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function updatePlanImportPreview() {
+  const text = document.getElementById('plan-import-text')?.value || '';
+  const preview = document.getElementById('plan-import-preview');
+  pendingImportedTextPlan = parseWorkoutPlanText(text);
+  if (!preview) return;
+  if (!pendingImportedTextPlan.exercises.length) {
+    preview.innerHTML = '尚未解析到課表列';
+    return;
+  }
+  preview.innerHTML = `
+    <div style="color:var(--accent);font-weight:700;margin-bottom:6px">已解析 ${pendingImportedTextPlan.exercises.length} 個動作</div>
+    ${pendingImportedTextPlan.exercises.slice(0, 8).map((ex, idx) => `
+      <div>${idx + 1}. ${escapeHtmlAttr(ex.name)}｜${escapeHtmlAttr(formatPrepExerciseSpec(ex))}</div>
+    `).join('')}
+    ${pendingImportedTextPlan.exercises.length > 8 ? `<div>...還有 ${pendingImportedTextPlan.exercises.length - 8} 個</div>` : ''}`;
+}
+
+function applyImportedTextPlan(studentId, save) {
+  if (!pendingImportedTextPlan) updatePlanImportPreview();
+  const plan = pendingImportedTextPlan || { exercises: [], notes: '' };
+  if (!plan.exercises.length) {
+    showToast('❌ 請先貼上可解析的課表');
+    return;
+  }
+  applyPrepPlanDraft(studentId, plan.exercises, plan.notes, save);
+}
+
 // ── Prep exercise row helpers ──
 function getPrepCatIcons() {
   return { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
@@ -1743,6 +2037,14 @@ function renderPrep(studentId) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div class="prep-section-title" style="margin-bottom:0">📋 課表動作</div>
         <button onclick="callGeminiAI('${studentId}')" style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:var(--radius-full);background:linear-gradient(135deg,rgba(108,92,231,0.3),rgba(0,229,160,0.3));border:1px solid rgba(108,92,231,0.4);color:var(--text-primary);font-size:0.78rem;font-weight:600;cursor:pointer">🧠 AI</button>
+      </div>
+      <div class="prep-tool-grid">
+        <button type="button" class="prep-tool-btn primary" onclick="showOneClickPrepPreview('${studentId}')">
+          <span>一鍵備課</span>
+        </button>
+        <button type="button" class="prep-tool-btn" onclick="showTextPlanImportModal('${studentId}')">
+          <span>貼上文字</span>
+        </button>
       </div>
       <div id="gemini-result"></div>
       <div style="display:flex;gap:4px;padding:0 4px 4px;font-size:0.68rem;color:var(--text-muted);font-weight:500">
