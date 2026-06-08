@@ -1626,7 +1626,10 @@ function renderStructuredPrepDraft(exercises) {
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div style="width:22px;height:22px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;flex-shrink:0">${idx + 1}</div>
         <div style="min-width:0;flex:1">
-          <input value="${escapeHtmlAttr(ex.name)}" placeholder="動作名稱" oninput="updateOneClickDraftExercise(${idx},'name',this.value)" style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);padding:0 0 5px;color:var(--text-primary);font-size:0.9rem;font-weight:800;box-sizing:border-box">
+          <div style="display:flex;align-items:center;gap:6px">
+            <input value="${escapeHtmlAttr(ex.name)}" placeholder="動作名稱" oninput="updateOneClickDraftExercise(${idx},'name',this.value)" style="min-width:0;flex:1;background:transparent;border:none;border-bottom:1px solid var(--border);padding:0 0 5px;color:var(--text-primary);font-size:0.9rem;font-weight:800;box-sizing:border-box">
+            <button type="button" onclick="removeOneClickDraftExercise(${idx})" title="刪除項目" style="width:28px;height:28px;border:1px solid rgba(255,107,107,0.35);background:rgba(255,107,107,0.1);color:var(--danger);border-radius:50%;font-size:0.9rem;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0">✕</button>
+          </div>
           ${renderOneClickDraftSetEditor(ex, idx)}
           ${(ex.subSets || []).map((ss, subIdx) => renderOneClickDraftSubSetEditor(ss, idx, subIdx)).join('')}
           <button type="button" onclick="addOneClickDraftSubSet(${idx})" style="margin-top:7px;border:1px dashed var(--border-light);background:transparent;color:var(--accent);border-radius:7px;padding:5px 8px;font-size:0.72rem;font-weight:700">+ 不同重量</button>
@@ -1681,6 +1684,20 @@ function removeOneClickDraftSubSet(idx, subIdx) {
   rerenderOneClickStructuredPreview();
 }
 
+function removeOneClickDraftExercise(idx) {
+  const exercises = pendingOneClickPrepDraft?.exercises;
+  if (!Array.isArray(exercises)) return;
+  if (exercises.length <= 1) {
+    showToast('⚠️ 至少保留一個動作');
+    return;
+  }
+  exercises.splice(idx, 1);
+  pendingOneClickPrepDraft.text = formatPrepPlanAsText(exercises, pendingOneClickPrepDraft.notes);
+  rerenderOneClickStructuredPreview();
+  const header = document.getElementById('one-click-draft-count');
+  if (header) header.textContent = `共 ${exercises.length} 個動作，可修正後直接套用`;
+}
+
 function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
   const applied = clonePrepPlanForApply(exercises);
   applied.studentId = studentId;
@@ -1707,7 +1724,7 @@ function renderOneClickPrepModal(studentId) {
     <div class="modal-header"><div class="modal-title">一鍵備課預覽</div></div>
     <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-        <div style="font-size:0.78rem;color:var(--text-secondary)">共 ${pendingOneClickPrepDraft.exercises.length} 個動作${generatedTime ? ` · ${generatedTime}` : ''}，可修正後直接套用</div>
+        <div id="one-click-draft-count" style="font-size:0.78rem;color:var(--text-secondary)">共 ${pendingOneClickPrepDraft.exercises.length} 個動作${generatedTime ? ` · ${generatedTime}` : ''}，可修正後直接套用</div>
         <button type="button" onclick="toggleOneClickTextPreview()" style="border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);border-radius:8px;padding:5px 8px;font-size:0.72rem;font-weight:700">文字版</button>
       </div>
       <div id="one-click-structured-preview" style="display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow-y:auto">
