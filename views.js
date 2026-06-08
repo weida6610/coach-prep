@@ -229,7 +229,7 @@ function renderSessionDetail(sessionId) {
               return `<span class="session-detail-set ${allDone ? 'completed' : ''}">${icon} ${spec}${partial}</span>`;
             }).join('')}
           </div>
-          <div class="session-detail-quality">品質: ${ex.quality}</div>
+          <div class="session-detail-quality">${ex.nextAction ? `下次安排: ${getNextActionLabel(ex.nextAction)}` : `品質: ${ex.quality}`}</div>
           ${ex.notes ? `<div class="session-detail-note">📝 ${ex.notes}</div>` : ''}
         </div>`;
       }).join('')}

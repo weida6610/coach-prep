@@ -10,6 +10,12 @@ let historyPanelCollapsed = false;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
 const PUSH_UP_BAR_SEQUENCE = ['槓6', '槓4', '槓3', '槓0', '槓KB'];
+const NEXT_ACTION_OPTIONS = [
+  { id: 'increase', label: '下次增加強度', emoji: '⬆️', tags: ['advance', 'moreLoad'] },
+  { id: 'maintain', label: '下次維持強度', emoji: '➡️', tags: ['keep'] },
+  { id: 'replace', label: '下次替換動作', emoji: '🔄', tags: ['replace'] },
+  { id: 'makeup', label: '時間不足下次補做', emoji: '⏱️', tags: ['makeup', 'timeShort'] }
+];
 const DECISION_TAG_OPTIONS = [
   { id: 'keep', label: '保留/維持', aliases: ['保留', '維持', '保持', '留著', 'keep'], cue: '依手寫標籤保留，不硬換動作' },
   { id: 'advance', label: '進階', aliases: ['進階', '升級', '加強', '可加強', '可進階'], cue: '依手寫標籤小幅進階' },
@@ -43,7 +49,7 @@ function isNeedsWorkQuality(quality) {
 }
 
 function isGoodQuality(quality) {
-  return quality === '優良' || quality === '優秀' || quality === '良好';
+  return quality === '優良' || quality === '優秀' || quality === '良好' || quality === '下次增加強度';
 }
 
 function progressExerciseWeight(weight, name, quality) {
@@ -407,9 +413,9 @@ function applyCompensationFindings(plan, findings) {
 }
 
 function qualityBucket(quality) {
-  if (isGoodQuality(quality)) return 'good';
-  if (quality === '尚可') return 'ok';
-  if (isNeedsWorkQuality(quality)) return 'needsWork';
+  if (isGoodQuality(quality) || quality === 'increase') return 'good';
+  if (quality === '尚可' || quality === '下次維持強度' || quality === 'maintain') return 'ok';
+  if (isNeedsWorkQuality(quality) || quality === '下次替換動作' || quality === 'replace') return 'needsWork';
   return '';
 }
 
@@ -427,6 +433,25 @@ function parseDecisionTags(notes) {
   });
   if (hasTimeOutNote(notes)) tags.push('timeout');
   return [...new Set(tags)];
+}
+
+function getNextActionOption(nextAction) {
+  return NEXT_ACTION_OPTIONS.find(option => option.id === nextAction || option.label === nextAction) || null;
+}
+
+function getNextActionLabel(nextAction) {
+  return getNextActionOption(nextAction)?.label || nextAction || '';
+}
+
+function nextActionDecisionTags(nextAction) {
+  return getNextActionOption(nextAction)?.tags || [];
+}
+
+function getExerciseDecisionTags(exercise) {
+  return [...new Set([
+    ...nextActionDecisionTags(exercise?.nextAction),
+    ...parseDecisionTags(exercise?.notes)
+  ])];
 }
 
 function decisionTagOption(id) {
@@ -455,10 +480,10 @@ function shouldProgressFromQualityAndTags(quality, tags) {
   return isGoodQuality(quality);
 }
 
-function shouldCarryForwardTimeOut(notes) {
-  const tags = parseDecisionTags(notes);
+function shouldCarryForwardTimeOut(exercise) {
+  const tags = getExerciseDecisionTags(exercise);
   if (hasAnyDecisionTag(tags, ['makeup', 'timeShort'])) return true;
-  if (!hasTimeOutNote(notes)) return false;
+  if (!hasTimeOutNote(exercise?.notes)) return false;
   if (hasAnyDecisionTag(tags, ['pause', 'condition', 'replace', 'regress', 'pain'])) return false;
   return true;
 }
@@ -485,7 +510,7 @@ function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_S
           needsWork: 0,
           timeout: 0,
           latestDate: session.date || '',
-          latestQuality: ex.quality || '',
+          latestQuality: getNextActionLabel(ex.nextAction) || ex.quality || '',
           latestNotes: ex.notes || '',
           latestDecisionTags: [],
           decisionTags: {},
@@ -493,28 +518,28 @@ function collectExerciseEvaluationSummary(sessions, limit = EVALUATION_SUMMARY_S
         });
       }
       const row = byName.get(key);
-      const tags = parseDecisionTags(ex.notes);
+      const tags = getExerciseDecisionTags(ex);
       row.count++;
       if (ex.category && !row.category) row.category = ex.category;
       if (ex.target && !row.target) row.target = ex.target;
       if (sessionIdx === 0) {
         row.latestDate = session.date || '';
-        row.latestQuality = ex.quality || '';
+        row.latestQuality = getNextActionLabel(ex.nextAction) || ex.quality || '';
         row.latestNotes = ex.notes || '';
         row.latestDecisionTags = tags;
       }
-      const bucket = qualityBucket(ex.quality);
+      const bucket = qualityBucket(ex.nextAction || ex.quality);
       if (bucket === 'good') row.good++;
       else if (bucket === 'ok') row.ok++;
       else if (bucket === 'needsWork') row.needsWork++;
-      if (hasTimeOutNote(ex.notes)) row.timeout++;
+      if (hasTimeOutNote(ex.notes) || hasAnyDecisionTag(tags, ['makeup', 'timeShort'])) row.timeout++;
       tags.forEach(tag => {
         if (tag === 'timeout') return;
         row.decisionTags[tag] = (row.decisionTags[tag] || 0) + 1;
       });
       row.history.push({
         date: session.date || '',
-        quality: ex.quality || '',
+        quality: getNextActionLabel(ex.nextAction) || ex.quality || '',
         notes: trimNoteForSummary(ex.notes),
         tags
       });
@@ -533,10 +558,10 @@ function evaluationCue(row) {
   if (!row) return '';
   const latestTags = row.latestDecisionTags || [];
   if (hasAnyDecisionTag(latestTags, ['pause'])) return '手寫標籤暫停/不要排，這次先移出課表';
-  if (hasAnyDecisionTag(latestTags, ['replace'])) return '手寫標籤替換，優先換同類型動作';
+  if (hasAnyDecisionTag(latestTags, ['replace'])) return '下次決策為替換，優先換同類型動作';
   if (hasAnyDecisionTag(latestTags, ['regress', 'lessLoad', 'pain'])) return '手寫標籤退階/減量/疼痛，優先降階並保留品質';
   if (hasAnyDecisionTag(latestTags, ['condition'])) return '手寫標籤狀態不適，視為當日狀態問題，不直接追重量';
-  if (hasAnyDecisionTag(latestTags, ['makeup', 'timeShort'])) return '手寫標籤補做/時間不足，下一份課表排入或提早安排';
+  if (hasAnyDecisionTag(latestTags, ['makeup', 'timeShort'])) return '下次決策為時間不足補做，下一份課表排入或提早安排';
   if (row.timeout) return '最近曾 time out，若是時間不足請補做；若是狀態不適請用決策標籤處理';
   if (row.needsWork >= 2) return '近期待改善重複出現，優先降階、簡化或替換';
   if (row.needsWork) return '近期評價需改善，保留品質空間並避免硬加強度';
@@ -549,7 +574,7 @@ function formatExerciseEvaluationSummary(rows) {
   if (!rows || !rows.length) return '無足夠動作評價紀錄';
   return rows.slice(0, 12).map(row => {
     const latest = row.latestQuality ? `最新:${row.latestQuality}` : '最新:未評';
-    const counts = `😀 優良${row.good} / 😐 尚可${row.ok} / 😢 需改善${row.needsWork}`;
+    const counts = `增加/良好 ${row.good} / 維持/尚可 ${row.ok} / 替換/需改善 ${row.needsWork}`;
     const cue = evaluationCue(row);
     const tagText = decisionTagLabels(row.latestDecisionTags).join('、');
     const notes = row.history
@@ -663,8 +688,8 @@ function carryForwardTimeoutExercises(plan, previousSession, exerciseLib) {
   const used = new Set(plan.map(ex => normalizeExerciseName(ex.name)));
   const nextPlan = [...plan];
   (previousSession.exercises || []).forEach(raw => {
-    const tags = parseDecisionTags(raw.notes);
-    if (!shouldCarryForwardTimeOut(raw.notes)) return;
+    const tags = getExerciseDecisionTags(raw);
+    if (!shouldCarryForwardTimeOut(raw)) return;
     const key = normalizeExerciseName(raw.name);
     if (!key || used.has(key)) {
       const existing = nextPlan.find(ex => normalizeExerciseName(ex.name) === key);
@@ -703,7 +728,7 @@ function sessionExerciseNameSet(session) {
 }
 
 function shouldKeepCopiedTemplateExercise(rawExercise) {
-  const tags = parseDecisionTags(rawExercise?.notes || '');
+  const tags = getExerciseDecisionTags(rawExercise);
   return hasAnyDecisionTag(tags, ['keep', 'makeup', 'timeShort', 'regress', 'lessLoad', 'pain', 'condition', 'control', 'activate'])
     || isNeedsWorkQuality(rawExercise?.quality)
     || hasTimeOutNote(rawExercise?.notes || '');
@@ -975,7 +1000,7 @@ async function callGeminiAI(studentId) {
 - 動作：
 ${s.exercises.map(raw => {
   const e = withExerciseMeta(raw);
-  return `  * [${e.category || '未分類'}] ${e.name} | ${formatExerciseGroupsForPrompt(e)} | 品質:${e.quality || ''} | 備註:${e.notes || ''}`;
+  return `  * [${e.category || '未分類'}] ${e.name} | ${formatExerciseGroupsForPrompt(e)} | 下次決策:${getNextActionLabel(e.nextAction) || e.quality || ''} | 備註:${e.notes || ''}`;
 }).join('\n')}
 - 教練筆記：${s.coachNotes || '無'}
 - 下堂建議：${s.nextSuggestion || '無'}`;
@@ -1002,11 +1027,11 @@ ${historyText}
 格式說明：「A 代償 B」代表 A 是代償者，B 是被抑制者。
 ${formatCompensationFindings(compensationFindings)}
 
-## 動作評價摘要（只彙整最近 ${EVALUATION_SUMMARY_SESSION_LIMIT} 堂課的品質與手寫備註）
+## 下次決策摘要（只彙整最近 ${EVALUATION_SUMMARY_SESSION_LIMIT} 堂課的決策標籤、舊品質與手寫備註）
 ${formatExerciseEvaluationSummary(exerciseEvaluations)}
 
 ## 可辨識手寫決策標籤
-教練可能會在動作備註中直接寫以下標籤或同義詞；這些標籤優先於單純評分或 time out。
+教練可能會按下「下次增加強度／下次維持強度／下次替換動作／時間不足下次補做」，也可能在動作備註中寫以下同義詞；明確決策優先於舊品質評分。
 ${formatDecisionTagOptionsForPrompt()}
 
 ## 課表模組輪替規則（重要）
@@ -1253,7 +1278,7 @@ function generateAISuggestions(studentId) {
   if (sessionN2) {
     let plan = sessionN2.exercises.map(raw => {
       const e = withExerciseMeta(raw);
-      const decisionTags = parseDecisionTags(e.notes);
+      const decisionTags = getExerciseDecisionTags(e);
       // Push up 扶槓特殊處理
       let name = e.name;
       const adjustedName = shouldProgressFromQualityAndTags(e.quality, decisionTags) ? adjustPushUpBar(name, e.quality) : null;
@@ -1295,15 +1320,15 @@ function generateAISuggestions(studentId) {
 
       // 優先排序：補做/時間不足/需改善的排前面，狀態不適或暫停交給決策標籤處理
       uniqueFromN1.sort((a, b) => {
-        const aTags = parseDecisionTags(a.notes);
-        const bTags = parseDecisionTags(b.notes);
+        const aTags = getExerciseDecisionTags(a);
+        const bTags = getExerciseDecisionTags(b);
         const aUrgent = hasAnyDecisionTag(aTags, ['makeup', 'timeShort']) || isNeedsWorkQuality(a.quality) ? 1 : 0;
         const bUrgent = hasAnyDecisionTag(bTags, ['makeup', 'timeShort']) || isNeedsWorkQuality(b.quality) ? 1 : 0;
         return bUrgent - aUrgent;
       });
 
       uniqueFromN1.slice(0, MAX_UNIQUE_CARRYOVER_EXERCISES).forEach(e => {
-        const tags = parseDecisionTags(e.notes);
+        const tags = getExerciseDecisionTags(e);
         if (hasAnyDecisionTag(tags, ['pause'])) return;
         const shouldMakeup = hasAnyDecisionTag(tags, ['makeup', 'timeShort']) || (hasTimeOutNote(e.notes) && !hasAnyDecisionTag(tags, ['condition', 'replace', 'regress', 'pain']));
         const needsWork = isNeedsWorkQuality(e.quality);
@@ -1692,18 +1717,20 @@ function renderPrep(studentId) {
             <div style="width:52px;text-align:center">重量</div>
             <div style="width:36px;text-align:center">次</div>
             <div style="width:28px;text-align:center">組</div>
-            <div style="width:32px;text-align:center">品質</div>
+            <div style="width:32px;text-align:center">下次</div>
           </div>
           ${s.exercises.map(e => {
             const groups = getSessionExerciseGroups(e);
-            const qualIcon = isGoodQuality(e.quality) ? '😀' : e.quality === '尚可' ? '😐' : isNeedsWorkQuality(e.quality) ? '😢' : '-';
+            const actionIcon = e.nextAction
+              ? (NEXT_ACTION_OPTIONS.find(option => option.id === e.nextAction)?.emoji || '•')
+              : (isGoodQuality(e.quality) ? '😀' : e.quality === '尚可' ? '😐' : isNeedsWorkQuality(e.quality) ? '😢' : '-');
             return groups.map((g, gi) => `
           <div style="display:flex;align-items:center;gap:4px;padding:${gi===0?'5':'2'}px 0;${gi===0?'border-top:1px solid var(--border);':''}font-size:0.78rem">
             <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${gi===0?e.name:''}</div>
             <div style="width:52px;text-align:center;color:var(--accent);font-size:0.75rem">${g.weight||'-'}</div>
             <div style="width:36px;text-align:center;font-size:0.75rem">${g.reps||'-'}</div>
             <div style="width:28px;text-align:center;font-size:0.75rem">${g.count}</div>
-            <div style="width:32px;text-align:center;font-size:0.72rem">${gi===0?qualIcon:''}</div>
+            <div style="width:32px;text-align:center;font-size:0.72rem">${gi===0?actionIcon:''}</div>
           </div>`).join('');
           }).join('')}
           ${s.coachNotes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-muted)">📝 ${s.coachNotes}</div>` : ''}
@@ -1789,6 +1816,7 @@ function renderSession(studentId) {
           allSets,
           completedSets: new Array(allSets.length).fill(false),
           quality: '',
+          nextAction: '',
           notes: '',
           actualWeight: ex.weight !== '-' ? ex.weight : ''
         };
@@ -1802,11 +1830,6 @@ function renderSession(studentId) {
   const ex = state.exercises[state.currentExIdx];
   const catEmojis = { 'NKT評估':'🔬','核心控制':'🎯','上肢推':'💪','上肢拉':'🏋️','下肢推':'🦵','下肢拉':'🍑','心肺':'❤️','全身':'⚡' };
   const catIcons  = { 'NKT評估':'nkt','核心控制':'core','上肢推':'push','上肢拉':'pull','下肢推':'lower-push','下肢拉':'lower-pull','心肺':'cardio','全身':'full' };
-  const qualities = [
-    { emoji:'😀', label:'優良' },
-    { emoji:'😐', label:'尚可' },
-    { emoji:'😢', label:'需改善' }
-  ];
   const conditionOptions = ['😴 疲勞','🤕 疼痛','💪 狀態佳','🤒 身體不適','😰 壓力大','🌙 睡眠不足'];
 
   const uniqueSpecs = [...new Set(ex.allSets.map(s => `${s.weight?s.weight+'×':''}${s.reps}`))].join(' / ');
@@ -1844,11 +1867,11 @@ function renderSession(studentId) {
             ${s.weight ? `<div class="set-weight">${s.weight}</div>` : ''}
           </div>`).join('')}
       </div>
-      <div class="prep-section-title mb-8">動作品質</div>
-      <div class="quality-selector">
-        ${qualities.map(q => `
-          <button class="quality-btn ${ex.quality === q.label ? 'selected' : ''}" onclick="setQuality('${q.label}')">
-            <span class="emoji">${q.emoji}</span>${q.label}
+      <div class="prep-section-title mb-8">下次動作安排</div>
+      <div class="next-action-selector">
+        ${NEXT_ACTION_OPTIONS.map(option => `
+          <button class="next-action-btn ${ex.nextAction === option.id ? 'selected' : ''}" data-action-id="${option.id}" onclick="setNextAction('${option.id}')">
+            <span class="emoji">${option.emoji}</span>${option.label}
           </button>`).join('')}
       </div>
       <div class="quick-note mb-16">
@@ -1980,7 +2003,7 @@ function addLibExerciseToSession(exerciseId) {
     exerciseId: ex.id, name: ex.name, category: ex.category,
     sets: ex.defaultSets, reps: ex.defaultReps, weight: '-', subSets: [],
     allSets, completedSets: new Array(allSets.length).fill(false),
-    quality: '', notes: '', actualWeight: ''
+    quality: '', nextAction: '', notes: '', actualWeight: ''
   };
   // 插入當前動作的下一位，不是 push 到最後
   const insertAt = currentSessionState.currentExIdx + 1;

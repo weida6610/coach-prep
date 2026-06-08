@@ -538,8 +538,10 @@ function renderLatestExerciseUsage(studentId, exercise) {
   const { session, exercise: used } = usage;
   const dateTime = [session.date, findSessionScheduleTime(session)].filter(Boolean).join(' ');
   const groups = formatExerciseUsageGroups(used);
-  const quality = used.quality ? `｜品質：${used.quality}` : '';
-  return `<div class="exercise-last-usage">最近 ${escapeHtmlValue(dateTime || '未註明日期')}｜${escapeHtmlValue(groups)}${escapeHtmlValue(quality)}</div>`;
+  const decision = used.nextAction
+    ? `｜下次：${getNextActionLabel(used.nextAction)}`
+    : (used.quality ? `｜品質：${used.quality}` : '');
+  return `<div class="exercise-last-usage">最近 ${escapeHtmlValue(dateTime || '未註明日期')}｜${escapeHtmlValue(groups)}${escapeHtmlValue(decision)}</div>`;
 }
 
 function showExercisePicker(studentId) {
@@ -714,10 +716,10 @@ function toggleSet(idx) {
   if (repsEl) repsEl.textContent = ex.completedSets[idx] ? '✅' : setReps;
 }
 
-function setQuality(q) {
-  currentSessionState.exercises[currentSessionState.currentExIdx].quality = q;
-  document.querySelectorAll('.quality-btn').forEach(b => {
-    b.classList.toggle('selected', b.textContent.includes(q));
+function setNextAction(actionId) {
+  currentSessionState.exercises[currentSessionState.currentExIdx].nextAction = actionId;
+  document.querySelectorAll('.next-action-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.actionId === actionId);
   });
 }
 
@@ -764,6 +766,7 @@ function saveSession() {
       allSets: (e.allSets||[]).map(s => ({ weight: s.weight || '', reps: s.reps || e.reps || '' })),
       completed: e.completedSets,
       quality: e.quality || '未評',
+      nextAction: e.nextAction || '',
       notes: e.notes,
       cues: e.cues || '',
       subSets: e.subSets || []
