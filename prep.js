@@ -1539,8 +1539,10 @@ function createPrepExerciseFromTextRow(name, spec, cue = '') {
 function parseMarkdownPlanRow(line) {
   const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
   if (cells.length < 2) return null;
-  if (/^[-:]+$/.test(cells.join(''))) return null;
-  if (/順序|動作|重量/.test(cells.join(''))) return null;
+  if (cells.every(cell => /^:?-{3,}:?$/.test(cell))) return null;
+  const firstCell = cells[0] || '';
+  const secondCell = cells[1] || '';
+  if (/^(順序|#|no\.?)$/i.test(firstCell) && /^(動作|項目|名稱)$/i.test(secondCell)) return null;
   const hasOrder = /^\d+$/.test(cells[0]);
   const name = hasOrder ? cells[1] : cells[0];
   const spec = hasOrder ? cells[2] : cells[1];
@@ -1594,6 +1596,20 @@ function createOneClickPrepDraft(studentId) {
   return { studentId, exercises, notes, text: formatPrepPlanAsText(exercises, notes) };
 }
 
+function renderStructuredPrepDraft(exercises) {
+  return clonePrepPlanForApply(exercises).map((ex, idx) => `
+    <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card)">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="width:22px;height:22px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;flex-shrink:0">${idx + 1}</div>
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.88rem;font-weight:800;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtmlAttr(ex.name)}</div>
+          <div style="font-size:0.76rem;color:var(--accent);margin-top:2px">${escapeHtmlAttr(formatPrepExerciseSpec(ex))}</div>
+          ${ex.cues || ex.planningReason ? `<div style="font-size:0.72rem;color:var(--text-secondary);line-height:1.45;margin-top:5px">${escapeHtmlAttr(ex.cues || ex.planningReason)}</div>` : ''}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
 function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
   const applied = clonePrepPlanForApply(exercises);
   applied.studentId = studentId;
@@ -1611,21 +1627,35 @@ function showOneClickPrepPreview(studentId) {
     <div class="modal-handle"></div>
     <div class="modal-header"><div class="modal-title">一鍵備課預覽</div></div>
     <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
-      <textarea id="one-click-prep-text" class="form-input" style="min-height:280px;font-family:monospace;font-size:0.76rem;line-height:1.5">${escapeHtmlAttr(pendingOneClickPrepDraft.text)}</textarea>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="font-size:0.78rem;color:var(--text-secondary)">共 ${pendingOneClickPrepDraft.exercises.length} 個動作，套用時會完整寫入備課列</div>
+        <button type="button" onclick="toggleOneClickTextPreview()" style="border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);border-radius:8px;padding:5px 8px;font-size:0.72rem;font-weight:700">文字版</button>
+      </div>
+      <div id="one-click-structured-preview" style="display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow-y:auto">
+        ${renderStructuredPrepDraft(pendingOneClickPrepDraft.exercises)}
+      </div>
+      <textarea id="one-click-prep-text" class="form-input" readonly style="display:none;min-height:240px;font-family:monospace;font-size:0.76rem;line-height:1.5">${escapeHtmlAttr(pendingOneClickPrepDraft.text)}</textarea>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button class="btn-primary secondary" onclick="showOneClickPrepPreview('${studentId}')">重新產出</button>
-        <button class="btn-primary secondary" onclick="applyEditedOneClickPrep('${studentId}', false)">套用</button>
+        <button class="btn-primary secondary" onclick="applyOneClickPrepDraft('${studentId}', false)">套用</button>
       </div>
-      <button class="btn-primary accent" onclick="applyEditedOneClickPrep('${studentId}', true)">套用並儲存</button>
+      <button class="btn-primary accent" onclick="applyOneClickPrepDraft('${studentId}', true)">套用並儲存</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('active');
 }
 
-function applyEditedOneClickPrep(studentId, save) {
-  const text = document.getElementById('one-click-prep-text')?.value || '';
-  const parsed = parseWorkoutPlanText(text);
-  const exercises = parsed.exercises.length ? parsed.exercises : pendingOneClickPrepDraft?.exercises || [];
-  const notes = parsed.notes || pendingOneClickPrepDraft?.notes || '';
+function toggleOneClickTextPreview() {
+  const list = document.getElementById('one-click-structured-preview');
+  const text = document.getElementById('one-click-prep-text');
+  if (!list || !text) return;
+  const showingText = text.style.display !== 'none';
+  text.style.display = showingText ? 'none' : 'block';
+  list.style.display = showingText ? 'flex' : 'none';
+}
+
+function applyOneClickPrepDraft(studentId, save) {
+  const exercises = pendingOneClickPrepDraft?.exercises || [];
+  const notes = pendingOneClickPrepDraft?.notes || '';
   if (!exercises.length) {
     showToast('❌ 沒有可套用的課表內容');
     return;
