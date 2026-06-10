@@ -1622,11 +1622,17 @@ function renderOneClickDraftSubSetEditor(ss, idx, subIdx) {
 
 function renderStructuredPrepDraft(exercises) {
   return clonePrepPlanForApply(exercises).map((ex, idx) => `
-    <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card)">
+    <div id="one-click-ex-${idx}"
+      ondragover="oneClickDraftDragOver(event,${idx})"
+      ondrop="oneClickDraftDrop(event,${idx})"
+      style="padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);transition:opacity 0.15s,border-top 0.1s">
       <div style="display:flex;gap:8px;align-items:flex-start">
-        <div style="width:22px;height:22px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;flex-shrink:0">${idx + 1}</div>
+        <span class="one-click-drag-handle" data-idx="${idx}" draggable="true"
+          ondragstart="oneClickDraftDragStart(event,${idx})" ondragend="oneClickDraftDragEnd()"
+          title="拖曳排序" style="width:26px;height:28px;color:var(--text-muted);display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;flex-shrink:0;cursor:grab;touch-action:none">⠿</span>
         <div style="min-width:0;flex:1">
           <div style="display:flex;align-items:center;gap:6px">
+            <span style="width:20px;height:20px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;flex-shrink:0">${idx + 1}</span>
             <input value="${escapeHtmlAttr(ex.name)}" placeholder="動作名稱" oninput="updateOneClickDraftExercise(${idx},'name',this.value)" style="min-width:0;flex:1;background:transparent;border:none;border-bottom:1px solid var(--border);padding:0 0 5px;color:var(--text-primary);font-size:0.9rem;font-weight:800;box-sizing:border-box">
             <button type="button" onclick="removeOneClickDraftExercise(${idx})" title="刪除項目" style="width:28px;height:28px;border:1px solid rgba(255,107,107,0.35);background:rgba(255,107,107,0.1);color:var(--danger);border-radius:50%;font-size:0.9rem;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0">✕</button>
           </div>
@@ -1645,6 +1651,7 @@ function rerenderOneClickStructuredPreview() {
   list.innerHTML = renderStructuredPrepDraft(pendingOneClickPrepDraft.exercises);
   const text = document.getElementById('one-click-prep-text');
   if (text) text.value = formatPrepPlanAsText(pendingOneClickPrepDraft.exercises, pendingOneClickPrepDraft.notes);
+  initOneClickDraftTouchDrag();
 }
 
 function updateOneClickDraftExercise(idx, field, value) {
@@ -1698,6 +1705,103 @@ function removeOneClickDraftExercise(idx) {
   if (header) header.textContent = `共 ${exercises.length} 個動作，可修正後直接套用`;
 }
 
+let oneClickDraftDragIdx = null;
+let oneClickDraftTouchIdx = null;
+
+function moveOneClickDraftExercise(fromIdx, targetIdx) {
+  const exercises = pendingOneClickPrepDraft?.exercises;
+  if (!Array.isArray(exercises) || fromIdx === targetIdx) return;
+  const moved = exercises.splice(fromIdx, 1)[0];
+  if (!moved) return;
+  exercises.splice(targetIdx, 0, moved);
+  pendingOneClickPrepDraft.text = formatPrepPlanAsText(exercises, pendingOneClickPrepDraft.notes);
+  rerenderOneClickStructuredPreview();
+}
+
+function clearOneClickDraftDragStyles() {
+  document.querySelectorAll('[id^="one-click-ex-"]').forEach(el => {
+    el.style.borderTop = '';
+    el.style.opacity = '';
+  });
+}
+
+function oneClickDraftDragStart(event, idx) {
+  oneClickDraftDragIdx = idx;
+  event.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => {
+    const el = document.getElementById(`one-click-ex-${idx}`);
+    if (el) el.style.opacity = '0.35';
+  }, 0);
+}
+
+function oneClickDraftDragOver(event, idx) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('[id^="one-click-ex-"]').forEach(el => el.style.borderTop = '');
+  if (idx !== oneClickDraftDragIdx) {
+    const el = document.getElementById(`one-click-ex-${idx}`);
+    if (el) el.style.borderTop = '2px solid var(--accent)';
+  }
+}
+
+function oneClickDraftDrop(event, targetIdx) {
+  event.preventDefault();
+  if (oneClickDraftDragIdx !== null) moveOneClickDraftExercise(oneClickDraftDragIdx, targetIdx);
+  oneClickDraftDragIdx = null;
+  clearOneClickDraftDragStyles();
+}
+
+function oneClickDraftDragEnd() {
+  oneClickDraftDragIdx = null;
+  clearOneClickDraftDragStyles();
+}
+
+function initOneClickDraftTouchDrag() {
+  document.querySelectorAll('.one-click-drag-handle').forEach(handle => {
+    if (handle.dataset.touchDragBound === '1') return;
+    handle.dataset.touchDragBound = '1';
+    handle.addEventListener('touchstart', event => {
+      oneClickDraftTouchIdx = parseInt(handle.dataset.idx, 10);
+      const el = document.getElementById(`one-click-ex-${oneClickDraftTouchIdx}`);
+      if (el) el.style.opacity = '0.35';
+      document.addEventListener('touchmove', onOneClickDraftTouchMove, { passive: false });
+      document.addEventListener('touchend', onOneClickDraftTouchEnd, { once: true });
+    }, { passive: true });
+  });
+}
+
+function onOneClickDraftTouchMove(event) {
+  if (oneClickDraftTouchIdx === null) return;
+  event.preventDefault();
+  const touch = event.touches[0];
+  document.querySelectorAll('[id^="one-click-ex-"]').forEach(el => {
+    el.style.borderTop = '';
+    const rect = el.getBoundingClientRect();
+    if (touch.clientY >= rect.top && touch.clientY < rect.bottom) {
+      const idx = parseInt(el.id.replace('one-click-ex-', ''), 10);
+      if (!Number.isNaN(idx) && idx !== oneClickDraftTouchIdx) el.style.borderTop = '2px solid var(--accent)';
+    }
+  });
+}
+
+function onOneClickDraftTouchEnd(event) {
+  document.removeEventListener('touchmove', onOneClickDraftTouchMove);
+  if (oneClickDraftTouchIdx === null) return;
+  const touch = event.changedTouches[0];
+  let targetIdx = null;
+  document.querySelectorAll('[id^="one-click-ex-"]').forEach(el => {
+    const rect = el.getBoundingClientRect();
+    if (touch.clientY >= rect.top && touch.clientY < rect.bottom) {
+      const idx = parseInt(el.id.replace('one-click-ex-', ''), 10);
+      if (!Number.isNaN(idx)) targetIdx = idx;
+    }
+  });
+  const fromIdx = oneClickDraftTouchIdx;
+  oneClickDraftTouchIdx = null;
+  clearOneClickDraftDragStyles();
+  if (targetIdx !== null && targetIdx !== fromIdx) moveOneClickDraftExercise(fromIdx, targetIdx);
+}
+
 function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
   const applied = clonePrepPlanForApply(exercises);
   applied.studentId = studentId;
@@ -1730,6 +1834,7 @@ function renderOneClickPrepModal(studentId) {
       <div id="one-click-structured-preview" style="display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow-y:auto">
         ${renderStructuredPrepDraft(pendingOneClickPrepDraft.exercises)}
       </div>
+      <button type="button" class="btn-add-exercise" onclick="showOneClickDraftExercisePicker('${studentId}')" style="margin-top:0">+ 新增動作</button>
       <textarea id="one-click-prep-text" class="form-input" readonly style="display:none;min-height:240px;font-family:monospace;font-size:0.76rem;line-height:1.5">${escapeHtmlAttr(pendingOneClickPrepDraft.text)}</textarea>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button class="btn-primary secondary" onclick="regenerateOneClickPrepDraft('${studentId}')">重新產出</button>
@@ -1737,12 +1842,81 @@ function renderOneClickPrepModal(studentId) {
       </div>
       <button class="btn-primary accent" onclick="applyOneClickPrepDraft('${studentId}', true)">套用並儲存</button>
     </div>`;
+  initOneClickDraftTouchDrag();
 }
 
 function regenerateOneClickPrepDraft(studentId) {
   pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
   renderOneClickPrepModal(studentId);
   showToast('✅ 已重新產出一鍵備課草稿');
+}
+
+function showOneClickDraftExercisePicker(studentId) {
+  const exercises = DB.getExercises();
+  const used = new Set((pendingOneClickPrepDraft?.exercises || []).map(ex => normalizeExerciseName(ex.name)));
+  const catIcons = getPrepCatIcons();
+  const catEmojis = getPrepCatEmojis();
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">新增動作至一鍵備課</div></div>
+    <div style="padding:0 16px 8px">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" placeholder="搜尋動作..." oninput="filterOneClickDraftExercises(this.value)">
+      </div>
+    </div>
+    <div style="padding:0 16px 16px;max-height:52vh;overflow-y:auto" id="one-click-exercise-picker-list">
+      ${exercises.map(ex => {
+        const alreadyUsed = used.has(normalizeExerciseName(ex.name));
+        return `
+          <button type="button" class="exercise-lib-card" data-name="${escapeHtmlAttr(ex.name)}"
+            onclick="addExerciseToOneClickDraft('${ex.id}','${studentId}')"
+            ${alreadyUsed ? 'disabled' : ''}
+            style="width:100%;text-align:left;${alreadyUsed ? 'opacity:0.45' : ''}">
+            <div class="exercise-icon ${catIcons[ex.category] || 'full'}">${catEmojis[ex.category] || '💪'}</div>
+            <div class="exercise-lib-info">
+              <div class="exercise-lib-name">${escapeHtmlAttr(ex.name)}${alreadyUsed ? ' · 已加入' : ''}</div>
+              <div class="exercise-lib-meta">${escapeHtmlAttr(ex.target || '')} · ${ex.defaultSets || 3}×${escapeHtmlAttr(ex.defaultReps || '10')}</div>
+              ${typeof renderLatestExerciseUsage === 'function' ? renderLatestExerciseUsage(studentId, ex) : ''}
+            </div>
+          </button>`;
+      }).join('')}
+    </div>
+    <div style="padding:0 16px 24px">
+      <button class="btn-primary secondary" onclick="renderOneClickPrepModal('${studentId}')">← 返回一鍵備課</button>
+    </div>`;
+}
+
+function filterOneClickDraftExercises(query) {
+  const keyword = String(query || '').trim().toLowerCase();
+  document.querySelectorAll('#one-click-exercise-picker-list .exercise-lib-card').forEach(card => {
+    card.style.display = (card.dataset.name || '').toLowerCase().includes(keyword) ? '' : 'none';
+  });
+}
+
+function addExerciseToOneClickDraft(exerciseId, studentId) {
+  const lib = DB.getExercises().find(ex => ex.id === exerciseId);
+  const exercises = pendingOneClickPrepDraft?.exercises;
+  if (!lib || !Array.isArray(exercises)) return;
+  if (exercises.some(ex => normalizeExerciseName(ex.name) === normalizeExerciseName(lib.name))) {
+    showToast('⚠️ 此動作已在草稿中');
+    return;
+  }
+  exercises.push({
+    exerciseId: lib.id,
+    name: lib.name,
+    category: lib.category || '',
+    target: lib.target || '',
+    sets: parseInt(lib.defaultSets, 10) || 3,
+    reps: String(lib.defaultReps || '10'),
+    weight: '-',
+    cues: lib.cues || '',
+    planningReason: '手動加入一鍵備課',
+    subSets: []
+  });
+  pendingOneClickPrepDraft.text = formatPrepPlanAsText(exercises, pendingOneClickPrepDraft.notes);
+  renderOneClickPrepModal(studentId);
+  showToast(`✅ 已加入 ${lib.name}`);
 }
 
 function toggleOneClickTextPreview() {
