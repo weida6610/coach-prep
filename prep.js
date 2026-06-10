@@ -8,6 +8,7 @@ let currentSessionState = null;
 let geminiLoading = false;
 let historyPanelCollapsed = false;
 let pendingOneClickPrepDraft = null;
+const oneClickPrepDraftsByStudent = new Map();
 let pendingImportedTextPlan = null;
 const MAX_UNIQUE_CARRYOVER_EXERCISES = 2;
 const EVALUATION_SUMMARY_SESSION_LIMIT = 3;
@@ -1814,7 +1815,11 @@ function applyPrepPlanDraft(studentId, exercises, notes = '', save = false) {
 }
 
 function showOneClickPrepPreview(studentId) {
-  pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+  pendingOneClickPrepDraft = oneClickPrepDraftsByStudent.get(studentId);
+  if (!pendingOneClickPrepDraft) {
+    pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+    oneClickPrepDraftsByStudent.set(studentId, pendingOneClickPrepDraft);
+  }
   renderOneClickPrepModal(studentId);
   document.getElementById('modal-overlay').classList.add('active');
 }
@@ -1847,6 +1852,7 @@ function renderOneClickPrepModal(studentId) {
 
 function regenerateOneClickPrepDraft(studentId) {
   pendingOneClickPrepDraft = createOneClickPrepDraft(studentId);
+  oneClickPrepDraftsByStudent.set(studentId, pendingOneClickPrepDraft);
   renderOneClickPrepModal(studentId);
   showToast('✅ 已重新產出一鍵備課草稿');
 }
@@ -1942,6 +1948,8 @@ function applyOneClickPrepDraft(studentId, save) {
 }
 
 function prepareNextPrepPlanFromLatestSession(studentId) {
+  oneClickPrepDraftsByStudent.delete(studentId);
+  if (pendingOneClickPrepDraft?.studentId === studentId) pendingOneClickPrepDraft = null;
   const exercises = clonePrepPlanForApply(generateAISuggestions(studentId));
   const notes = [
     '系統自動準備下一堂課表',
@@ -1955,7 +1963,7 @@ function showTextPlanImportModal(studentId) {
   pendingImportedTextPlan = null;
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-header"><div class="modal-title">貼上文字課表</div></div>
+    <div class="modal-header"><div class="modal-title">匯入文字課表</div></div>
     <div style="padding:0 16px 24px;display:flex;flex-direction:column;gap:12px">
       <textarea id="plan-import-text" class="form-input" style="min-height:220px;font-size:0.82rem;line-height:1.5"
         placeholder="可貼 Markdown 表格，或例如：&#10;1. Dead Bug｜呼吸控制 × 10 × 2&#10;2. Trap Bar DL｜40kg × 6 × 1；60kg × 4 × 2"
@@ -2361,7 +2369,7 @@ function renderPrep(studentId) {
           <span>一鍵備課</span>
         </button>
         <button type="button" class="prep-tool-btn" onclick="showTextPlanImportModal('${studentId}')">
-          <span>貼上文字</span>
+          <span>匯入文字課表</span>
         </button>
       </div>
       <div id="gemini-result"></div>
